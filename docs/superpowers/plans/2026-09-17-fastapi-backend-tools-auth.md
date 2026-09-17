@@ -1309,6 +1309,8 @@ Expected: one row per request made in Step 3, with the correct `tool_name`/`outc
 
 This is a "checkbox" CI setup, not full environment provisioning: spinning up seeded Postgres + Qdrant + real Cognito test users inside a GitHub Actions runner is real infrastructure work with its own failure modes, disproportionate to what a lint+unit gate needs to prove. Integration tests keep running locally (Task 9) and are excluded here by design, not by oversight.
 
+**A real gotcha to know about before writing the workflow:** `app/config.py` (Task 2) reads `LOCAL_DATABASE_URL`, `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, and `COGNITO_APP_CLIENT_ID` from `os.environ[...]` **eagerly at import time** (no defaults, `KeyError` if missing). `test_guardrails.py` imports `app.guardrails` → `app.auth` → `app.config`, so even though that test itself needs zero live services, just *importing* it in a fresh CI checkout (no `.env` file — it's gitignored) will crash before any test runs. The fix is to give the CI job dummy values for those four vars via the workflow's `env:` block — nothing in `test_schemas.py`/`test_guardrails.py` actually uses their values, so fake strings are fine.
+
 - [ ] **Step 1: Add `ruff` and confirm the codebase lints clean**
 
 Append to `requirements.txt`:
@@ -1331,7 +1333,7 @@ Fix anything it flags in `app/` or `tests/` before proceeding — a first CI run
 pytest -m "not integration" -v
 ```
 
-Expected: PASS — only `tests/test_schemas.py` and `tests/test_guardrails.py` should run (both have zero external dependencies); everything else is skipped by the marker filter.
+Expected: PASS — only `tests/test_schemas.py` and `tests/test_guardrails.py` should run (both have zero external dependencies); everything else is skipped by the marker filter. This local run uses the real `.env`, so it won't exercise the import-time `KeyError` gotcha above — that only bites in a bare CI checkout with no `.env` file, which is why Step 3's workflow YAML sets dummy values explicitly.
 
 - [ ] **Step 3: Write the workflow**
 
@@ -1359,6 +1361,15 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Run unit tests (integration tests need local Postgres/Qdrant/Cognito — excluded here, see Task 9)
+        env:
+          # app/config.py reads these at import time even for tests that
+          # never use them (test_guardrails.py imports it transitively via
+          # app.auth) — dummy values are enough, nothing here connects to
+          # a real service.
+          LOCAL_DATABASE_URL: "postgresql+psycopg2://dummy:dummy@localhost:5433/dummy"
+          COGNITO_REGION: "us-east-1"
+          COGNITO_USER_POOL_ID: "dummy"
+          COGNITO_APP_CLIENT_ID: "dummy"
         run: pytest -m "not integration" -v
 ```
 
