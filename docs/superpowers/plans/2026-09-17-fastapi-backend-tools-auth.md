@@ -265,20 +265,20 @@ def engine() -> Engine:
 
 `tests/__init__.py`: empty file.
 
-Add a throwaway assertion at the bottom of `tests/conftest.py` for this step only (delete once `test_tools.py` exists and uses the fixture for real):
+Add this permanent connectivity smoke test to the bottom of `tests/conftest.py` — no later task consumes the `engine` fixture directly (Tasks 4-5's tool functions manage their own engine internally via `get_engine()`), so this is not a throwaway: it stays as the one test that fails fast and clearly if the local Docker Postgres container isn't running, before any tool test gets a chance to fail with a more confusing error.
 
 ```python
-def test_engine_fixture_connects(engine):
+def test_local_database_is_reachable(engine):
     with engine.connect() as conn:
         assert conn.execute(__import__("sqlalchemy").text("SELECT 1")).scalar() == 1
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 4: Run test to verify it fails**
 
 Run: `pytest tests/conftest.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'app'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 5: Write minimal implementation**
 
 `app/__init__.py`: empty file.
 
@@ -319,12 +319,12 @@ def get_engine() -> Engine:
     return create_engine(settings.local_database_url)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 6: Run test to verify it passes**
 
 Run: `pytest tests/conftest.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add app/__init__.py app/config.py app/db.py tests/__init__.py tests/conftest.py \
