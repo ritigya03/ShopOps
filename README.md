@@ -4,11 +4,11 @@ A conversational e-commerce operations agent for order, seller, policy, and
 delivery workflows, built on the Olist e-commerce dataset. See
 `docs/ShopOps_AI_Technical_Design_Document.pdf` for the full architecture.
 
-This repo currently implements the **local data layer only**: a PostgreSQL
-database (via Docker Compose) with the `shopops_data`, `shopops_views`, and
-`shopops_ops` schemas, plus a script to ingest the Olist CSVs. Cloud
-infrastructure (AWS RDS, Qdrant, etc.) is not used yet — everything here runs
-locally.
+This repo implements the data layer: PostgreSQL with the `shopops_data`,
+`shopops_views`, and `shopops_ops` schemas, plus a script to ingest the
+Olist CSVs. It can run against either a local Docker Postgres or an AWS RDS
+Postgres instance — same schema, same ingestion script, only `.env` differs.
+Qdrant and the FastAPI/agent layer from the design doc are not built yet.
 
 ## Project layout
 
@@ -31,6 +31,64 @@ docker-compose.yml     local PostgreSQL service
   `vw_compensation_eligibility`.
 - `shopops_ops` — control-plane tables: `policy_documents`, `action_requests`,
   `audit_events` (append-only; a trigger blocks UPDATE/DELETE).
+
+## Policy documents
+
+`data/policy/*.md` holds the actual policy content (delivery SLA,
+compensation/refund eligibility, seller escalation) — the source of truth
+for `search_policy` and `calculate_compensation` once the agent layer
+exists. Each file has a YAML frontmatter block (`doc_id`, `version`,
+`title`, `domain`, `effective_from`, `status`).
+
+```bash
+source .venv/bin/activate
+python scripts/register_policy_docs.py
+```
+
+Syncs each file's metadata + a content checksum into
+`shopops_ops.policy_documents` (upsert on `doc_id, version` — safe to
+re-run after editing a policy file).
+
+## Qdrant (policy retrieval)
+
+Qdrant runs locally via the same `docker-compose.yml` (REST on `6333`,
+gRPC on `6334`). It's the RAG layer behind `search_policy`: policy
+documents get chunked section-by-section, embedded, and indexed so a
+natural-language query can retrieve the right passage with a citation.
+
+```bash
+docker compose up -d qdrant
+source .venv/bin/activate
+python scripts/ingest_policy_to_qdrant.py
+```
+
+This parses each `## heading` in `data/policy/*.md` as one chunk (mirrors
+the "section-aware chunks" design in the TDD §7), embeds it locally with
+`sentence-transformers/all-MiniLM-L6-v2` via Qdrant's built-in FastEmbed
+integration — **no external embedding API key needed** — and writes it to
+the `shopops_policy` collection (recreated each run, so it's safe to
+re-run after editing a policy doc). Each point's payload carries
+`doc_id`, `version`, `section`, `domain`, `status`, `source_uri`, and an
+`excerpt`, matching the `PolicyEvidence` shape `search_policy` is meant to
+return.
+
+Quick sanity check:
+
+```bash
+source .venv/bin/activate
+python3 -c "
+from qdrant_client import QdrantClient, models
+client = QdrantClient(url='http://localhost:6333')
+res = client.query_points(
+    collection_name='shopops_policy',
+    query=models.Document(text='What compensation do I get for a late delivery?',
+                           model='sentence-transformers/all-MiniLM-L6-v2'),
+    limit=5,
+)
+for p in res.points:
+    print(f\"{p.score:.3f}  {p.payload['doc_id']} v{p.payload['version']} §{p.payload['section']}\")
+"
+```
 
 ## Prerequisites
 
@@ -124,9 +182,52 @@ source .venv/bin/activate
 python scripts/ingest.py
 ```
 
-## Stopping
+## Stopping (local Docker)
 
 ```bash
 docker compose down       # stop, keep data
 docker compose down -v    # stop and delete all data
 ```
+
+## AWS RDS (cloud target)
+
+To point the same schema/ingestion at an RDS PostgreSQL instance instead of
+local Docker:
+
+1. Create the RDS instance (PostgreSQL, Free Tier `db.t3.micro`), with
+   **Public access = Yes** and its security group's inbound rule restricted
+   to **My IP** on port 5432 — never `0.0.0.0/0`. Manage the master password
+   in AWS Secrets Manager, not by hand.
+2. RDS only creates the default `postgres` database — create `shopops`
+   yourself once, connected to `postgres`:
+   ```sql
+   CREATE DATABASE shopops;
+   ```
+3. Update `.env` with the RDS endpoint, port `5432`, and
+   `?sslmode=require` on `DATABASE_URL` (RDS requires SSL). URL-encode the
+   password if it contains special characters
+   (`python3 -c "from urllib.parse import quote_plus; print(quote_plus('<password>'))"`).
+4. Run the migrations and ingestion exactly as before — no `psql` binary is
+   required, `db/migrations/*.sql` can be applied with psycopg2 directly:
+   ```bash
+   source .venv/bin/activate
+   python3 -c "
+   import psycopg2
+   from pathlib import Path
+   import os
+   from dotenv import load_dotenv
+   load_dotenv()
+   conn = psycopg2.connect(os.environ['DATABASE_URL'].replace('postgresql+psycopg2', 'postgresql'))
+   conn.autocommit = True
+   cur = conn.cursor()
+   for f in sorted(Path('db/migrations').glob('*.sql')):
+       print(f.name); cur.execute(f.read_text())
+   "
+   python scripts/ingest.py
+   ```
+
+The RDS Free Tier instance is billed (~$0.03/hr, or free for 12 months on a
+new account) — delete it from the console when you're done experimenting to
+avoid ongoing charges. `.env` currently keeps both the RDS values (active)
+and the local Docker values (commented out) so you can switch back by
+swapping which block is commented.
