@@ -1,0 +1,50 @@
+from functools import lru_cache
+
+import jwt
+from fastapi import Header, HTTPException
+from jwt import PyJWKClient
+from pydantic import BaseModel
+
+from app.config import settings
+
+_ROLE_PRIORITY = ["OperationsManager", "SupportAgent", "Viewer"]
+
+
+class CurrentUser(BaseModel):
+    sub: str
+    email: str
+    role: str
+
+
+@lru_cache
+def _jwks_client() -> PyJWKClient:
+    issuer = f"https://cognito-idp.{settings.cognito_region}.amazonaws.com/{settings.cognito_user_pool_id}"
+    return PyJWKClient(f"{issuer}/.well-known/jwks.json")
+
+
+def _primary_role(groups: list[str]) -> str:
+    for role in _ROLE_PRIORITY:
+        if role in groups:
+            return role
+    raise jwt.InvalidTokenError("token has no recognized cognito:groups role")
+
+
+def decode_cognito_token(token: str) -> CurrentUser:
+    issuer = f"https://cognito-idp.{settings.cognito_region}.amazonaws.com/{settings.cognito_user_pool_id}"
+    signing_key = _jwks_client().get_signing_key_from_jwt(token)
+    claims = jwt.decode(
+        token, signing_key.key, algorithms=["RS256"],
+        audience=settings.cognito_app_client_id, issuer=issuer,
+    )
+    role = _primary_role(claims.get("cognito:groups", []))
+    return CurrentUser(sub=claims["sub"], email=claims.get("email", ""), role=role)
+
+
+def get_current_user(authorization: str = Header(...)) -> CurrentUser:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    token = authorization.removeprefix("Bearer ")
+    try:
+        return decode_cognito_token(token)
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
