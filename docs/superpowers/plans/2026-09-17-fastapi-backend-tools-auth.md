@@ -1549,11 +1549,329 @@ Pushing this to GitHub to see the workflow actually trigger is optional and up t
 
 ---
 
+### Task 11: Final-review fix wave
+
+The final whole-branch review (after Task 10) found one Critical bug and several Important gaps. This task fixes the ones scoped for immediate action; the rest are recorded in "Explicitly out of scope" below with the reasoning for deferring them.
+
+**Files:**
+- Create: `db/migrations/005_fix_view_fanouts.sql`
+- Create: `app/audit.py`
+- Modify: `app/routes.py` (use `app.audit.log_audit` instead of its own `_log_audit`)
+- Modify: `app/guardrails.py` (audit 403 denials)
+- Modify: `app/auth.py` (broaden exception handling)
+- Modify: `app/schemas.py`, `app/tools.py` (`is_at_risk` abstains instead of asserting `False`)
+- Modify: `tests/test_auth.py` (un-mark the two network-free tests)
+- Test: `tests/test_view_fixes.py` (new — regression test for the fan-out fix)
+
+#### Fix 1 (Critical): `vw_order_ops` and `vw_seller_metrics` fan-out inflation
+
+**Root cause, verified live:** both views join `order_items` (which can have multiple rows per seller per order) directly against `order_payments`/`order_reviews` (which are per-order, not per-item) with no de-duplication, so `SUM`/`AVG` counts each payment or review once per item row instead of once per order. Confirmed on order `00143d0f86d6fbd9f9b38ab440ac16f5` (1 seller, 3 items, 1 payment of 109.29): `vw_order_ops` reports `327.87` (3×). Confirmed genuinely multi-seller orders also exist (e.g. `002f98c0f7efd42638ed6100ca699b42`), so `get_order`'s own outer `SUM(order_value)` across per-seller rows needs to change too — after the view fix, every seller-row for one order shows the *same* correct order-level total, so summing across sellers would still multiply by seller count. Use `MAX` instead, which is correct whether an order has 1 seller or many.
+
+`db/migrations/005_fix_view_fanouts.sql`:
+
+```sql
+-- Fixes order_items x order_payments/order_reviews fan-out inflation in
+-- vw_order_ops and vw_seller_metrics (found by final whole-branch review,
+-- 2026-09-18). Both views joined order_items directly against per-order
+-- payment/review data with no de-duplication, so an order/seller with N
+-- items counted each payment or review N times.
+SET search_path TO shopops_views;
+
+CREATE OR REPLACE VIEW vw_order_ops AS
+WITH order_totals AS (
+    SELECT order_id, SUM(payment_value) AS order_value
+    FROM shopops_data.order_payments
+    GROUP BY order_id
+),
+order_sellers AS (
+    SELECT DISTINCT order_id, seller_id FROM shopops_data.order_items
+)
+SELECT
+    o.order_id,
+    o.order_status,
+    o.order_purchase_timestamp,
+    o.order_estimated_delivery_date,
+    o.order_delivered_customer_date,
+    os.seller_id,
+    ot.order_value
+FROM shopops_data.orders o
+JOIN order_sellers os USING (order_id)
+LEFT JOIN order_totals ot USING (order_id);
+
+CREATE OR REPLACE VIEW vw_seller_metrics AS
+WITH seller_orders AS (
+    SELECT DISTINCT seller_id, order_id FROM shopops_data.order_items
+),
+order_reviews_avg AS (
+    SELECT order_id, AVG(review_score) AS review_score
+    FROM shopops_data.order_reviews
+    GROUP BY order_id
+)
+SELECT
+    so.seller_id,
+    COUNT(DISTINCT so.order_id) AS order_count,
+    AVG(CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date
+             THEN 1.0 ELSE 0.0 END) AS late_delivery_rate,
+    AVG(ora.review_score) AS avg_review_score
+FROM seller_orders so
+JOIN shopops_data.orders o ON o.order_id = so.order_id
+LEFT JOIN order_reviews_avg ora ON ora.order_id = so.order_id
+GROUP BY so.seller_id;
+```
+
+Then fix `get_order`'s outer aggregation in `app/tools.py` — change the one word `SUM` to `MAX`:
+
+```python
+    query = text("""
+        SELECT order_id, order_status, order_purchase_timestamp,
+               order_estimated_delivery_date, order_delivered_customer_date,
+               MAX(order_value) AS order_value, COUNT(DISTINCT seller_id) AS seller_count
+        FROM shopops_views.vw_order_ops
+        WHERE order_id = :order_id
+        GROUP BY order_id, order_status, order_purchase_timestamp,
+                 order_estimated_delivery_date, order_delivered_customer_date
+    """)
+```
+
+- [ ] **Step 1: Apply the migration to local Docker Postgres**
+
+```bash
+source .venv/bin/activate
+python3 -c "
+import psycopg2
+from pathlib import Path
+conn = psycopg2.connect(host='localhost', port=5433, dbname='shopops', user='shopops_admin', password='sILjkmKb7Rgjb4yXZex61yvk')
+conn.autocommit = True
+cur = conn.cursor()
+cur.execute(Path('db/migrations/005_fix_view_fanouts.sql').read_text())
+print('applied')
+"
+```
+
+- [ ] **Step 2: Write the failing regression test**
+
+`tests/test_view_fixes.py`:
+
+```python
+import pytest
+from sqlalchemy import text
+
+from app.db import get_engine
+from app.tools import get_order
+
+pytestmark = pytest.mark.integration
+
+
+def test_get_order_value_not_inflated_by_multi_item_single_seller_order():
+    # 00143d0f86d6fbd9f9b38ab440ac16f5: 1 seller, 3 items, 1 payment of
+    # 109.29 — pre-fix this returned 327.87 (3x inflated).
+    result = get_order("00143d0f86d6fbd9f9b38ab440ac16f5")
+    assert result is not None
+    assert result.order_value == pytest.approx(109.29)
+
+
+def test_vw_seller_metrics_matches_order_weighted_truth():
+    # A seller with a known true late-delivery rate, computed independently
+    # via DISTINCT order_id (not through the view under test).
+    with get_engine().connect() as conn:
+        seller_id = conn.execute(text("""
+            SELECT seller_id FROM shopops_data.order_items
+            GROUP BY seller_id HAVING COUNT(DISTINCT order_id) >= 20 LIMIT 1
+        """)).scalar()
+
+        true_rate = conn.execute(text("""
+            SELECT AVG(CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date
+                             THEN 1.0 ELSE 0.0 END)
+            FROM (SELECT DISTINCT seller_id, order_id FROM shopops_data.order_items
+                  WHERE seller_id = :seller_id) so
+            JOIN shopops_data.orders o ON o.order_id = so.order_id
+        """), {"seller_id": seller_id}).scalar()
+
+        view_rate = conn.execute(text("""
+            SELECT late_delivery_rate FROM shopops_views.vw_seller_metrics
+            WHERE seller_id = :seller_id
+        """), {"seller_id": seller_id}).scalar()
+
+    assert view_rate == pytest.approx(true_rate)
+```
+
+- [ ] **Step 3: Run to verify it fails against the old view**
+
+If you haven't applied Step 1 yet, run this first — expected FAIL (327.87 != 109.29 approx). If you already applied Step 1, skip straight to Step 4 — there's nothing to observe failing anymore, which is fine, the migration is the fix.
+
+- [ ] **Step 4: Apply the `get_order` code fix and re-run**
+
+Change `SUM(order_value)` to `MAX(order_value)` in `app/tools.py`'s `get_order` query (shown above).
+
+```bash
+pytest tests/test_view_fixes.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Apply the same migration to RDS, for consistency**
+
+```bash
+python3 -c "
+import psycopg2
+from pathlib import Path
+conn = psycopg2.connect(
+    host='shopops-db.crkoemkoa8t0.ap-south-1.rds.amazonaws.com', port=5432,
+    dbname='shopops', user='shopopsadmin', password='t7#OAJn>lHvD-GNWUVLEVG>H[)FL', sslmode='require',
+)
+conn.autocommit = True
+cur = conn.cursor()
+cur.execute(Path('db/migrations/005_fix_view_fanouts.sql').read_text())
+print('applied to RDS')
+"
+```
+
+#### Fix 2 (Important, I1): audit 403 denials
+
+Extract the audit-logging function out of `app/routes.py` into a shared module so `app/guardrails.py` can use it too without a circular import (`routes.py` already imports from `guardrails.py`).
+
+`app/audit.py` (new):
+
+```python
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import text
+
+from app.auth import CurrentUser
+from app.db import get_engine
+
+
+def log_audit(user: CurrentUser, tool_name: str, outcome: str) -> None:
+    with get_engine().begin() as conn:
+        conn.execute(text("""
+            INSERT INTO shopops_ops.audit_events
+                (event_id, occurred_at, request_id, user_id, role_snapshot, tool_name, outcome)
+            VALUES (:event_id, :occurred_at, :request_id, :user_id, :role, :tool_name, :outcome)
+        """), {
+            "event_id": str(uuid.uuid4()), "occurred_at": datetime.now(timezone.utc),
+            "request_id": str(uuid.uuid4()), "user_id": user.sub, "role": user.role,
+            "tool_name": tool_name, "outcome": outcome,
+        })
+```
+
+In `app/routes.py`: delete the local `_log_audit` function, add `from app.audit import log_audit`, and replace every `_log_audit(...)` call with `log_audit(...)`.
+
+In `app/guardrails.py`: add `from app.audit import log_audit`, and log on the denial branch before raising:
+
+```python
+def require_permission(permission: str):
+    def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if permission not in PERMISSIONS.get(current_user.role, set()):
+            log_audit(current_user, permission, "denied")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{current_user.role}' lacks permission '{permission}'",
+            )
+        return current_user
+    return dependency
+```
+
+Add a test to `tests/test_routes.py`:
+
+```python
+def test_seller_metrics_denial_is_audited(cognito_tokens, engine):
+    from sqlalchemy import text
+    before = datetime.now(timezone.utc)
+    resp = client.get(
+        "/sellers/48436dade18ac8b2bce089ec2a041202/metrics",
+        headers=_auth(cognito_tokens["Viewer"]),
+    )
+    assert resp.status_code == 403
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT outcome, role_snapshot FROM shopops_ops.audit_events
+            WHERE occurred_at > :before AND tool_name = 'can_view_seller_metrics'
+            ORDER BY occurred_at DESC LIMIT 1
+        """), {"before": before}).mappings().first()
+    assert row is not None
+    assert row["outcome"] == "denied"
+    assert row["role_snapshot"] == "Viewer"
+```
+
+(401 cases — missing/invalid token — are explicitly not covered here; see "Explicitly out of scope" below.)
+
+#### Fix 3 (Important, I2): broaden Cognito exception handling to the whole family
+
+In `app/auth.py`, `get_current_user`'s except clause currently catches `(jwt.InvalidTokenError, jwt.PyJWKClientError)`. There are other `PyJWTError` subclasses (`PyJWKSetError`, `PyJWKError`, `InvalidKeyError`, `MissingCryptographyError`) that are reachable (e.g. a malformed/empty JWKS response during key rotation) and currently escape as unhandled 500s — the exact bug class already fixed once for `PyJWKClientError` specifically. Catch the family root instead:
+
+```python
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+```
+
+No test changes needed — the existing `test_get_current_user_rejects_token_with_unknown_kid` already exercises a `PyJWKClientError`, which is still a `PyJWTError`, so it still passes; this just widens what's caught.
+
+#### Fix 4 (Important, I3): `is_at_risk` abstains instead of asserting `False`
+
+`app/tools.py`'s `estimate_delivery_risk` hardcodes `is_at_risk = False` and never reassigns it, meaning an undelivered order already past its estimate is reported as "not at risk" rather than "not evaluated" — a confident-sounding false negative from a tool whose whole job is estimating risk. In `app/schemas.py`, change:
+
+```python
+    is_at_risk: bool | None = None
+```
+
+In `app/tools.py`, change the initial value from `is_at_risk = False` to `is_at_risk = None` and leave it unset (matches the existing comment already explaining why wall-clock "at risk" can't be computed against this historical dataset).
+
+#### Fix 5 (Important, I6): stop hiding network-free auth tests from CI
+
+`tests/test_auth.py` currently has a module-level `pytestmark = pytest.mark.integration`, but `test_decode_rejects_garbage_token` and `test_get_current_user_rejects_missing_header` touch no network, DB, or Cognito at all — verified: a malformed non-JWT string fails at header parsing before any JWKS fetch is attempted. CI currently runs zero auth tests, including these two that need nothing. Remove the module-level `pytestmark` and instead decorate only the two tests that need live Cognito:
+
+```python
+@pytest.mark.integration
+def test_decode_valid_viewer_token(cognito_tokens):
+    ...
+
+
+def test_decode_rejects_garbage_token():
+    ...  # no decorator — network-free
+
+
+@pytest.mark.integration
+def test_get_current_user_rejects_token_with_unknown_kid():
+    ...
+
+
+def test_get_current_user_rejects_missing_header():
+    ...  # no decorator — network-free
+```
+
+- [ ] **Step 6: Run the full suite and the CI-equivalent subset**
+
+```bash
+pytest -v
+env LOCAL_DATABASE_URL="postgresql+psycopg2://dummy:dummy@localhost:5433/dummy" \
+    COGNITO_REGION="us-east-1" COGNITO_USER_POOL_ID="dummy" COGNITO_APP_CLIENT_ID="dummy" \
+    pytest -m "not integration" -v
+```
+
+Expected: full suite all passing (36 tests: the original 33 + the 2 new ones from Fixes 1 and 2); CI-equivalent subset now includes the 2 un-marked auth tests (14 tests: the prior 12 + 2).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add db/migrations/005_fix_view_fanouts.sql app/audit.py app/routes.py app/guardrails.py \
+        app/auth.py app/schemas.py app/tools.py tests/test_auth.py tests/test_routes.py tests/test_view_fixes.py \
+        docs/superpowers/plans/2026-09-17-fastapi-backend-tools-auth.md
+git commit -m "fix: address final-review findings (view fan-out, denial audit, auth exceptions, risk abstention, CI coverage)"
+```
+
+---
+
 ## Explicitly out of scope for this plan
 
 - **LangGraph orchestrator / LLM-driven routing and synthesis** — blocked on the deferred LLM provider decision. A follow-up plan once that's chosen.
 - **The write path** (`create_compensation`/`refund`, `action_requests` approval workflow, signed approval tokens) — `calculate_compensation` here is read-only/proposal-only by design.
 - **Audit hash-chaining** (`prev_hash` linking each event to the last) — this plan writes flat audit rows; tamper-evident chaining is a separate hardening task.
 - **CloudWatch/Langfuse observability, CI/CD, EC2 deployment** — TDD §9/§11, correctly deferred per §13's MVP-first ordering.
-- **`vw_order_ops` (`db/migrations/004_views.sql`) inflates `order_value` for multi-item orders** — it joins `orders ⋈ order_items ⋈ order_payments` on `order_id` alone, so an order with N items and M payment rows produces an N×M fan-out before `SUM(payment_value)`, inflating the sum by a factor of N. Found during Task 4's review of `get_order`. This is pre-existing infrastructure from before this plan (not in this plan's File Structure), and doesn't affect any decision logic here: `calculate_compensation` (Task 5) uses `vw_compensation_eligibility` instead, which joins `orders` directly to `order_payments` with no `order_items` fan-out and is unaffected. `get_order`'s `order_value` is display-only. Worth fixing in a future migration, out of scope for this plan.
 - **Active-version / expiry filtering inside `search_policy` itself** (TDD §7: "retrieval requires an active policy version... conflicting or expired passages trigger abstention"). `calculate_compensation` checks `policy_documents.status` directly, but `search_policy` doesn't cross-check it yet — with only one version of each doc today (all `status='active'`) this can't be exercised. Add the check when a second policy version is introduced.
+- **`get_order` performs no resource scoping** (TDD §5/§3.1/§3.2 all describe order access as scoped to an assigned customer/role, not global). Any authenticated Viewer can read any order by ID. Not implementable against the Olist dataset as-is (it carries no operator-assignment/tenancy data), and inventing one would be scope creep beyond what this plan's tools were asked to do. Flagged by the final whole-branch review as a named spec control that's silently unenforced — recorded here explicitly so it isn't mistaken for "handled."
+- **`get_seller_metrics` ignores the `date_window` parameter and the minimum-cohort-size rule** (TDD §5 specifies `seller_id, date_window <= 365 days`; POL-SELLER-001 §4 requires cohorts under 10 orders return "insufficient data" rather than a real metric). Implemented as an all-time, no-minimum aggregate. Real gap against both the tool contract and this project's own policy document — deferred here rather than fixed in the final-review fix wave (Task 11) because it changes the tool's public signature/behavior in a way that deserves its own task-sized pass, not a bolt-on.
+- **POL-COMP-001 §2 condition 3 / §5 idempotency** (no double compensation on the same order) is unchecked in `calculate_compensation` — unexercisable today since no write path exists yet to ever populate `action_requests`, but worth remembering once Phase 2's write path lands.
+- **`audit_events.arguments_hash`, `result_hash`, `citations`, `policy_version`** are never populated (only `prev_hash` was explicitly deferred as hash-chaining above). Real gap against TDD §3.3 and the §9 "citation grounding" eval dimension. Deferred here as a distinct hardening pass — it touches every route (hash the request/response, store `search_policy`'s results as `citations`) and is large enough to deserve its own task rather than folding into Task 11's fix wave.
+- **Denial audit only covers 403 (`require_permission`), not 401** (`get_current_user` failures — missing/invalid token — have no `CurrentUser` to attribute a row to). Task 11 fixes the 403 case; a 401 audit trail would need request-level middleware, deferred here.
+- **`request_id` in `_log_audit`/`log_audit` is a fresh UUID uncorrelated to the actual incoming HTTP request** — provides uniqueness, not request tracing. Real request-ID threading (accept `X-Request-ID`, generate one in middleware if absent, propagate through) is a small, self-contained follow-up, deferred rather than added to Task 11.
