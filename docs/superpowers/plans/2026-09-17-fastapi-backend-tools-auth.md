@@ -874,9 +874,11 @@ def cognito_tokens():
 `tests/test_auth.py` (needs live Cognito for token retrieval and JWKS fetch, so marked `integration`):
 
 ```python
+import jwt
 import pytest
+from fastapi import HTTPException
 
-from app.auth import decode_cognito_token
+from app.auth import decode_cognito_token, get_current_user
 
 pytestmark = pytest.mark.integration
 
@@ -890,6 +892,20 @@ def test_decode_valid_viewer_token(cognito_tokens):
 def test_decode_rejects_garbage_token():
     with pytest.raises(Exception):
         decode_cognito_token("not-a-real-token")
+
+
+def test_get_current_user_rejects_token_with_unknown_kid():
+    # A well-formed JWT (unlike the garbage-string case above) whose kid
+    # isn't in this pool's JWKS — this is the case that raises
+    # jwt.PyJWKClientError, not jwt.InvalidTokenError, and must still
+    # come back as a clean 401 rather than an unhandled 500.
+    bogus_token = jwt.encode(
+        {"sub": "someone"}, "irrelevant-secret-that-is-long-enough-32b", algorithm="HS256",
+        headers={"kid": "nonexistent-kid"},
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user(authorization=f"Bearer {bogus_token}")
+    assert exc_info.value.status_code == 401
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -950,11 +966,13 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
     token = authorization.removeprefix("Bearer ")
     try:
         return decode_cognito_token(token)
-    except jwt.InvalidTokenError as exc:
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 ```
 
 `PyJWKClient` fetches the JWKS itself internally (via `urllib`, bundled with `pyjwt`) — no extra HTTP dependency needed.
+
+**A real gotcha caught during pre-dispatch review:** `jwt.PyJWKClientError` (raised by `get_signing_key_from_jwt` when a token's `kid` doesn't match any key in the JWKS — e.g. a token from a different Cognito pool, or presented after a key rotation) is **not** a subclass of `jwt.InvalidTokenError` — verified directly against the installed pyjwt (`PyJWKClientError.__mro__` shows it sits under `PyJWTError` as a sibling, not under `InvalidTokenError`). Catching only `InvalidTokenError` would let that case fall through as an unhandled exception → FastAPI's default 500, instead of the clean 401 the "deny-by-default" constraint requires. Catching both explicitly closes that gap.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
