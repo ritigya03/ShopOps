@@ -30,7 +30,7 @@ def get_order(order_id: str) -> OrderTimeline | None:
     query = text("""
         SELECT order_id, order_status, order_purchase_timestamp,
                order_estimated_delivery_date, order_delivered_customer_date,
-               SUM(order_value) AS order_value, COUNT(DISTINCT seller_id) AS seller_count
+               MAX(order_value) AS order_value, COUNT(DISTINCT seller_id) AS seller_count
         FROM shopops_views.vw_order_ops
         WHERE order_id = :order_id
         GROUP BY order_id, order_status, order_purchase_timestamp,
@@ -121,7 +121,7 @@ def estimate_delivery_risk(order_id: str) -> RiskAssessment | None:
     delay_days = None
     severity = None
     is_late = False
-    is_at_risk = False
+    is_at_risk = None
 
     if delivered is not None:
         diff = (delivered - estimated).days

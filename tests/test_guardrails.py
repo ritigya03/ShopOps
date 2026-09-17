@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+import app.guardrails as guardrails_module
 from app.auth import CurrentUser
 from app.guardrails import (
     InsufficientEvidenceError,
@@ -8,6 +9,16 @@ from app.guardrails import (
     require_permission,
 )
 from app.schemas import PolicyEvidence
+
+
+@pytest.fixture(autouse=True)
+def _no_audit_db_calls(monkeypatch):
+    # require_permission's denial branch now calls log_audit (Fix 2), which
+    # opens a real DB connection. These tests exercise pure permission
+    # logic and must stay network-free; the audit-on-denial behavior
+    # itself is covered against a real DB by
+    # test_routes.py::test_seller_metrics_denial_is_audited.
+    monkeypatch.setattr(guardrails_module, "log_audit", lambda *args, **kwargs: None)
 
 
 def test_require_permission_allows_role_that_has_it():

@@ -54,5 +54,5 @@ def get_current_user(authorization: str | None = Header(default=None)) -> Curren
     token = authorization.removeprefix("Bearer ")
     try:
         return decode_cognito_token(token)
-    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
+    except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")

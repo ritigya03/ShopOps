@@ -4,9 +4,8 @@ from fastapi import HTTPException
 
 from app.auth import decode_cognito_token, get_current_user
 
-pytestmark = pytest.mark.integration
 
-
+@pytest.mark.integration
 def test_decode_valid_viewer_token(cognito_tokens):
     user = decode_cognito_token(cognito_tokens["Viewer"])
     assert user.role == "Viewer"
@@ -18,6 +17,7 @@ def test_decode_rejects_garbage_token():
         decode_cognito_token("not-a-real-token")
 
 
+@pytest.mark.integration
 def test_get_current_user_rejects_token_with_unknown_kid():
     # A well-formed JWT (unlike the garbage-string case above) whose kid
     # isn't in this pool's JWKS — this is the case that raises

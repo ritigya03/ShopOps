@@ -33,7 +33,7 @@ class RiskAssessment(BaseModel):
     order_id: str
     order_status: str
     is_late: bool
-    is_at_risk: bool
+    is_at_risk: bool | None = None
     delay_days: int | None = None
     severity: str | None = None  # "minor" | "moderate" | "severe" | None
     signal_availability: str = "unavailable"  # no external shipping/weather signal wired up yet

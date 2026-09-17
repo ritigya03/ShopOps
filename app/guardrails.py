@@ -1,5 +1,6 @@
 from fastapi import Depends, HTTPException
 
+from app.audit import log_audit
 from app.auth import CurrentUser, get_current_user
 from app.schemas import PolicyEvidence
 
@@ -23,6 +24,7 @@ class InsufficientEvidenceError(Exception):
 def require_permission(permission: str):
     def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
         if permission not in PERMISSIONS.get(current_user.role, set()):
+            log_audit(current_user, permission, "denied")
             raise HTTPException(
                 status_code=403,
                 detail=f"Role '{current_user.role}' lacks permission '{permission}'",

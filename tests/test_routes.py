@@ -99,3 +99,21 @@ def test_get_order_writes_audit_event(cognito_tokens, engine):
     assert row is not None
     assert row["outcome"] == "success"
     assert row["role_snapshot"] == "Viewer"
+
+
+def test_seller_metrics_denial_is_audited(cognito_tokens, engine):
+    before = datetime.now(timezone.utc)
+    resp = client.get(
+        "/sellers/48436dade18ac8b2bce089ec2a041202/metrics",
+        headers=_auth(cognito_tokens["Viewer"]),
+    )
+    assert resp.status_code == 403
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT outcome, role_snapshot FROM shopops_ops.audit_events
+            WHERE occurred_at > :before AND tool_name = 'can_view_seller_metrics'
+            ORDER BY occurred_at DESC LIMIT 1
+        """), {"before": before}).mappings().first()
+    assert row is not None
+    assert row["outcome"] == "denied"
+    assert row["role_snapshot"] == "Viewer"
