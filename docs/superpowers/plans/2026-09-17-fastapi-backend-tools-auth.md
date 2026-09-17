@@ -906,6 +906,15 @@ def test_get_current_user_rejects_token_with_unknown_kid():
     with pytest.raises(HTTPException) as exc_info:
         get_current_user(authorization=f"Bearer {bogus_token}")
     assert exc_info.value.status_code == 401
+
+
+def test_get_current_user_rejects_missing_header():
+    # authorization: str | None = Header(default=None) is what makes this
+    # 401 instead of FastAPI's own 422 request-validation rejection for a
+    # required Header(...) parameter.
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user(authorization=None)
+    assert exc_info.value.status_code == 401
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -957,11 +966,19 @@ def decode_cognito_token(token: str) -> CurrentUser:
         audience=settings.cognito_app_client_id, issuer=issuer,
     )
     role = _primary_role(claims.get("cognito:groups", []))
-    return CurrentUser(sub=claims["sub"], email=claims.get("email", ""), role=role)
+    sub = claims.get("sub")
+    if not sub:
+        # Bare claims["sub"] would raise an uncaught KeyError here (not
+        # jwt.InvalidTokenError), slipping past get_current_user's except
+        # clause as an unhandled 500. Raising InvalidTokenError explicitly
+        # keeps this failure mode inside the same caught family as every
+        # other invalid-token case.
+        raise jwt.InvalidTokenError("token is missing required 'sub' claim")
+    return CurrentUser(sub=sub, email=claims.get("email", ""), role=role)
 
 
-def get_current_user(authorization: str = Header(...)) -> CurrentUser:
-    if not authorization.startswith("Bearer "):
+def get_current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.removeprefix("Bearer ")
     try:
@@ -972,7 +989,9 @@ def get_current_user(authorization: str = Header(...)) -> CurrentUser:
 
 `PyJWKClient` fetches the JWKS itself internally (via `urllib`, bundled with `pyjwt`) — no extra HTTP dependency needed.
 
-**A real gotcha caught during pre-dispatch review:** `jwt.PyJWKClientError` (raised by `get_signing_key_from_jwt` when a token's `kid` doesn't match any key in the JWKS — e.g. a token from a different Cognito pool, or presented after a key rotation) is **not** a subclass of `jwt.InvalidTokenError` — verified directly against the installed pyjwt (`PyJWKClientError.__mro__` shows it sits under `PyJWTError` as a sibling, not under `InvalidTokenError`). Catching only `InvalidTokenError` would let that case fall through as an unhandled exception → FastAPI's default 500, instead of the clean 401 the "deny-by-default" constraint requires. Catching both explicitly closes that gap.
+**A real gotcha caught during pre-dispatch review (1 of 2):** `authorization: str = Header(...)` (a required, non-Optional parameter) makes FastAPI's own request-validation layer reject a request with no `Authorization` header at all — returning a `422`, before `get_current_user`'s body ever runs. Verified directly with a minimal FastAPI app. Since the plan requires every auth failure to come back as a clean `401`, the parameter is `str | None = Header(default=None)` instead, with an explicit `not authorization` check alongside the `Bearer ` prefix check.
+
+**A real gotcha caught during pre-dispatch review (2 of 2):** `jwt.PyJWKClientError` (raised by `get_signing_key_from_jwt` when a token's `kid` doesn't match any key in the JWKS — e.g. a token from a different Cognito pool, or presented after a key rotation) is **not** a subclass of `jwt.InvalidTokenError` — verified directly against the installed pyjwt (`PyJWKClientError.__mro__` shows it sits under `PyJWTError` as a sibling, not under `InvalidTokenError`). Catching only `InvalidTokenError` would let that case fall through as an unhandled exception → FastAPI's default 500, instead of the clean 401 the "deny-by-default" constraint requires. Catching both explicitly closes that gap.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1157,7 +1176,7 @@ def test_get_order_accessible_to_viewer(cognito_tokens):
 
 def test_get_order_without_token_is_rejected():
     resp = client.get("/orders/00010242fe8c5a6d1ba2dd792cb16214")
-    assert resp.status_code in (401, 422)
+    assert resp.status_code == 401
 
 
 def test_seller_metrics_forbidden_for_viewer(cognito_tokens):
