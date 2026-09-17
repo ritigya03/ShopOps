@@ -10,7 +10,7 @@ class OrderTimeline(BaseModel):
     order_status: str
     purchase_timestamp: datetime
     estimated_delivery_date: datetime
-    delivered_customer_date: Optional[datetime]
+    delivered_customer_date: Optional[datetime] = None
     order_value: Decimal
     seller_count: int
 
@@ -19,7 +19,7 @@ class SellerMetrics(BaseModel):
     seller_id: str
     order_count: int
     late_delivery_rate: float
-    avg_review_score: Optional[float]
+    avg_review_score: Optional[float] = None
 
 
 class PolicyEvidence(BaseModel):
@@ -35,8 +35,8 @@ class RiskAssessment(BaseModel):
     order_status: str
     is_late: bool
     is_at_risk: bool
-    delay_days: Optional[int]
-    severity: Optional[str]  # "minor" | "moderate" | "severe" | None
+    delay_days: Optional[int] = None
+    severity: Optional[str] = None  # "minor" | "moderate" | "severe" | None
     signal_availability: str = "unavailable"  # no external shipping/weather signal wired up yet
 
 
@@ -46,8 +46,8 @@ class CompensationProposal(BaseModel):
     reason: str
     policy_doc_id: str
     policy_version: str
-    severity: Optional[str]
-    compensation_percentage: Optional[float]
-    order_value: Optional[Decimal]
-    proposed_amount: Optional[Decimal]
+    severity: Optional[str] = None
+    compensation_percentage: Optional[float] = None
+    order_value: Optional[Decimal] = None
+    proposed_amount: Optional[Decimal] = None
     cap_applied: bool = False
