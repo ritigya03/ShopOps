@@ -1,5 +1,6 @@
 import pytest
 from fastapi import HTTPException
+from unittest.mock import Mock
 
 import app.guardrails as guardrails_module
 from app.auth import CurrentUser
@@ -18,21 +19,25 @@ def _no_audit_db_calls(monkeypatch):
     # logic and must stay network-free; the audit-on-denial behavior
     # itself is covered against a real DB by
     # test_routes.py::test_seller_metrics_denial_is_audited.
-    monkeypatch.setattr(guardrails_module, "log_audit", lambda *args, **kwargs: None)
+    mock = Mock()
+    monkeypatch.setattr(guardrails_module, "log_audit", mock)
+    return mock
 
 
-def test_require_permission_allows_role_that_has_it():
+def test_require_permission_allows_role_that_has_it(_no_audit_db_calls):
     dependency = require_permission("can_view_seller_metrics")
     user = CurrentUser(sub="1", email="a@b.com", role="OperationsManager")
     assert dependency(current_user=user) == user
+    _no_audit_db_calls.assert_not_called()
 
 
-def test_require_permission_rejects_role_without_it():
+def test_require_permission_rejects_role_without_it(_no_audit_db_calls):
     dependency = require_permission("can_view_seller_metrics")
     user = CurrentUser(sub="1", email="a@b.com", role="Viewer")
     with pytest.raises(HTTPException) as exc_info:
         dependency(current_user=user)
     assert exc_info.value.status_code == 403
+    _no_audit_db_calls.assert_called_once_with(user, "can_view_seller_metrics", "denied")
 
 
 def test_support_agent_can_propose_compensation_but_not_view_seller_metrics():
