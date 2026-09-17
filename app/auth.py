@@ -37,11 +37,19 @@ def decode_cognito_token(token: str) -> CurrentUser:
         audience=settings.cognito_app_client_id, issuer=issuer,
     )
     role = _primary_role(claims.get("cognito:groups", []))
-    return CurrentUser(sub=claims["sub"], email=claims.get("email", ""), role=role)
+    sub = claims.get("sub")
+    if not sub:
+        # Bare claims["sub"] would raise an uncaught KeyError here (not
+        # jwt.InvalidTokenError), slipping past get_current_user's except
+        # clause as an unhandled 500. Raising InvalidTokenError explicitly
+        # keeps this failure mode inside the same caught family as every
+        # other invalid-token case.
+        raise jwt.InvalidTokenError("token is missing required 'sub' claim")
+    return CurrentUser(sub=sub, email=claims.get("email", ""), role=role)
 
 
-def get_current_user(authorization: str = Header(...)) -> CurrentUser:
-    if not authorization.startswith("Bearer "):
+def get_current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.removeprefix("Bearer ")
     try:

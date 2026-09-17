@@ -30,3 +30,12 @@ def test_get_current_user_rejects_token_with_unknown_kid():
     with pytest.raises(HTTPException) as exc_info:
         get_current_user(authorization=f"Bearer {bogus_token}")
     assert exc_info.value.status_code == 401
+
+
+def test_get_current_user_rejects_missing_header():
+    # authorization: str | None = Header(default=None) is what makes this
+    # 401 instead of FastAPI's own 422 request-validation rejection for a
+    # required Header(...) parameter.
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user(authorization=None)
+    assert exc_info.value.status_code == 401
