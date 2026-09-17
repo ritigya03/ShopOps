@@ -14,7 +14,7 @@ def test_decode_valid_viewer_token(cognito_tokens):
 
 
 def test_decode_rejects_garbage_token():
-    with pytest.raises(Exception):
+    with pytest.raises(jwt.InvalidTokenError):
         decode_cognito_token("not-a-real-token")
 
 

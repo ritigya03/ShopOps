@@ -1,17 +1,22 @@
 from decimal import Decimal
-from typing import Optional
 
 from qdrant_client import QdrantClient, models
 from sqlalchemy import text
 
 from app.config import settings
 from app.db import get_engine
-from app.schemas import CompensationProposal, OrderTimeline, PolicyEvidence, RiskAssessment, SellerMetrics
+from app.schemas import (
+    CompensationProposal,
+    OrderTimeline,
+    PolicyEvidence,
+    RiskAssessment,
+    SellerMetrics,
+)
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 POLICY_COLLECTION = "shopops_policy"
 
-_qdrant_client: Optional[QdrantClient] = None
+_qdrant_client: QdrantClient | None = None
 
 
 def _get_qdrant_client() -> QdrantClient:
@@ -21,7 +26,7 @@ def _get_qdrant_client() -> QdrantClient:
     return _qdrant_client
 
 
-def get_order(order_id: str) -> Optional[OrderTimeline]:
+def get_order(order_id: str) -> OrderTimeline | None:
     query = text("""
         SELECT order_id, order_status, order_purchase_timestamp,
                order_estimated_delivery_date, order_delivered_customer_date,
@@ -46,7 +51,7 @@ def get_order(order_id: str) -> Optional[OrderTimeline]:
     )
 
 
-def get_seller_metrics(seller_id: str) -> Optional[SellerMetrics]:
+def get_seller_metrics(seller_id: str) -> SellerMetrics | None:
     query = text("""
         SELECT seller_id, order_count, late_delivery_rate, avg_review_score
         FROM shopops_views.vw_seller_metrics
@@ -59,7 +64,7 @@ def get_seller_metrics(seller_id: str) -> Optional[SellerMetrics]:
     return SellerMetrics(**row)
 
 
-def search_policy(query: str, domain: Optional[str] = None, top_k: int = 5) -> list[PolicyEvidence]:
+def search_policy(query: str, domain: str | None = None, top_k: int = 5) -> list[PolicyEvidence]:
     top_k = min(top_k, 5)
     query_filter = None
     if domain is not None:
@@ -89,7 +94,7 @@ _SEVERITY_BANDS = [(3, "minor"), (7, "moderate")]  # >3 and <=7 -> moderate; >7 
 # (NUMERIC column), and Decimal * float raises TypeError in Python —
 # both operands must be Decimal.
 _COMPENSATION_PCT = {"minor": Decimal("0.10"), "moderate": Decimal("0.25"), "severe": Decimal("0.50")}
-_SEVERE_CAP = Decimal("150")
+_SEVERE_CAP = Decimal(150)
 
 
 def _severity_for_delay(delay_days: int) -> str:
@@ -99,7 +104,7 @@ def _severity_for_delay(delay_days: int) -> str:
     return "severe"
 
 
-def estimate_delivery_risk(order_id: str) -> Optional[RiskAssessment]:
+def estimate_delivery_risk(order_id: str) -> RiskAssessment | None:
     query = text("""
         SELECT order_id, order_status, order_estimated_delivery_date,
                order_delivered_customer_date
@@ -139,7 +144,7 @@ def estimate_delivery_risk(order_id: str) -> Optional[RiskAssessment]:
     )
 
 
-def calculate_compensation(order_id: str, policy_version: str = "1.0") -> Optional[CompensationProposal]:
+def calculate_compensation(order_id: str, policy_version: str = "1.0") -> CompensationProposal | None:
     doc_id = "POL-COMP-001"
     with get_engine().connect() as conn:
         policy_row = conn.execute(text("""

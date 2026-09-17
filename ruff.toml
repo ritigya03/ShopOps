@@ -1,0 +1,6 @@
+[lint]
+# B008 (function-call-in-default-argument) flags FastAPI's own Depends(...)
+# dependency-injection idiom, used throughout app/routes.py and
+# app/guardrails.py. Restructuring around it would fight the framework, not
+# fix a bug, so it's disabled rather than "fixed".
+ignore = ["B008"]

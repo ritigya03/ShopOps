@@ -2,7 +2,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.auth import CurrentUser
-from app.guardrails import InsufficientEvidenceError, assert_evidence_present, require_permission
+from app.guardrails import (
+    InsufficientEvidenceError,
+    assert_evidence_present,
+    require_permission,
+)
 from app.schemas import PolicyEvidence
 
 

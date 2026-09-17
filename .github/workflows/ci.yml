@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      - name: Run unit tests (integration tests need local Postgres/Qdrant/Cognito — excluded here, see Task 9)
+        env:
+          # app/config.py reads these at import time even for tests that
+          # never use them (test_guardrails.py imports it transitively via
+          # app.auth) — dummy values are enough, nothing here connects to
+          # a real service.
+          LOCAL_DATABASE_URL: "postgresql+psycopg2://dummy:dummy@localhost:5433/dummy"
+          COGNITO_REGION: "us-east-1"
+          COGNITO_USER_POOL_ID: "dummy"
+          COGNITO_APP_CLIENT_ID: "dummy"
+        run: pytest -m "not integration" -v

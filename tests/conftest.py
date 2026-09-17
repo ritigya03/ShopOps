@@ -1,7 +1,6 @@
 import pytest
 from sqlalchemy import Engine
 
-from app.config import settings
 from app.db import get_engine
 
 
