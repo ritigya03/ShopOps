@@ -207,6 +207,7 @@ git commit -m "chore: add Cognito test-token verification script"
 - Create: `app/db.py`
 - Create: `tests/__init__.py`
 - Create: `tests/conftest.py`
+- Create: `pytest.ini`
 - Modify: `requirements.txt`
 - Modify: `.env` (add `LOCAL_DATABASE_URL`)
 - Modify: `.env.example` (add `LOCAL_DATABASE_URL` placeholder)
@@ -232,7 +233,19 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-- [ ] **Step 2: Add `LOCAL_DATABASE_URL` to `.env` and `.env.example`**
+- [ ] **Step 2: Register the `integration` pytest marker**
+
+`pytest.ini`:
+
+```ini
+[pytest]
+markers =
+    integration: needs live Postgres/Qdrant/Cognito (excluded from CI in Task 10)
+```
+
+Registering it here (before any test uses it) avoids pytest's "unknown marker" warning once Tasks 4, 5, 6, and 8 apply `@pytest.mark.integration` to their DB/Qdrant/Cognito-dependent tests.
+
+- [ ] **Step 3: Add `LOCAL_DATABASE_URL` to `.env` and `.env.example`**
 
 In `.env`, add a line (this always points at the local Docker Postgres regardless of what `DATABASE_URL` is currently pointed at):
 
@@ -246,7 +259,7 @@ In `.env.example`, add the placeholder equivalent:
 LOCAL_DATABASE_URL=postgresql+psycopg2://shopops_admin:changeme@localhost:5433/shopops
 ```
 
-- [ ] **Step 3: Write the failing test**
+- [ ] **Step 4: Write the failing test**
 
 `tests/conftest.py`:
 
@@ -265,20 +278,21 @@ def engine() -> Engine:
 
 `tests/__init__.py`: empty file.
 
-Add this permanent connectivity smoke test to the bottom of `tests/conftest.py` — no later task consumes the `engine` fixture directly (Tasks 4-5's tool functions manage their own engine internally via `get_engine()`), so this is not a throwaway: it stays as the one test that fails fast and clearly if the local Docker Postgres container isn't running, before any tool test gets a chance to fail with a more confusing error.
+Add this permanent connectivity smoke test to the bottom of `tests/conftest.py` — no later task consumes the `engine` fixture directly (Tasks 4-5's tool functions manage their own engine internally via `get_engine()`), so this is not a throwaway: it stays as the one test that fails fast and clearly if the local Docker Postgres container isn't running, before any tool test gets a chance to fail with a more confusing error. It's marked `integration` since it needs the live container.
 
 ```python
+@pytest.mark.integration
 def test_local_database_is_reachable(engine):
     with engine.connect() as conn:
         assert conn.execute(__import__("sqlalchemy").text("SELECT 1")).scalar() == 1
 ```
 
-- [ ] **Step 4: Run test to verify it fails**
+- [ ] **Step 5: Run test to verify it fails**
 
 Run: `pytest tests/conftest.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'app'`
 
-- [ ] **Step 5: Write minimal implementation**
+- [ ] **Step 6: Write minimal implementation**
 
 `app/__init__.py`: empty file.
 
@@ -319,17 +333,17 @@ def get_engine() -> Engine:
     return create_engine(settings.local_database_url)
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [ ] **Step 7: Run test to verify it passes**
 
 Run: `pytest tests/conftest.py -v`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add app/__init__.py app/config.py app/db.py tests/__init__.py tests/conftest.py \
-        requirements.txt .env.example
-git commit -m "feat: add app config and DB engine scaffolding"
+        pytest.ini requirements.txt .env.example
+git commit -m "feat: add app config, DB engine scaffolding, and pytest markers"
 ```
 
 ---
@@ -453,10 +467,14 @@ git commit -m "feat: add Pydantic schemas for tool contracts"
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/test_tools.py` (use a real order/seller ID from the ingested Olist data):
+`tests/test_tools.py` (use a real order/seller ID from the ingested Olist data). All tests here need the live local Postgres + Qdrant containers, so the whole file is marked `integration`:
 
 ```python
+import pytest
+
 from app.tools import get_order, get_seller_metrics, search_policy
+
+pytestmark = pytest.mark.integration
 
 
 def test_get_order_returns_known_order():
@@ -606,10 +624,14 @@ Compensation tiers (POL-COMP-001 §3): minor = 10%, moderate = 25%, severe = 50%
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/test_calc_tools.py` (pick a real late-delivered order and a real on-time order from the data — run a quick query against `shopops_data.orders` locally to find one of each if these specific IDs don't fit):
+`tests/test_calc_tools.py` (pick a real late-delivered order and a real on-time order from the data — run a quick query against `shopops_data.orders` locally to find one of each if these specific IDs don't fit). Needs the live local Postgres container, so marked `integration`:
 
 ```python
+import pytest
+
 from app.tools import calculate_compensation, estimate_delivery_risk
+
+pytestmark = pytest.mark.integration
 
 
 def test_estimate_delivery_risk_on_time_order():
@@ -771,7 +793,7 @@ git commit -m "feat: add estimate_delivery_risk and calculate_compensation tools
 
 **Interfaces:**
 - Consumes: `app.config.settings` (Task 2), real tokens from Task 1's test users
-- Produces: `CurrentUser` (Pydantic model: `sub: str`, `email: str`, `role: str`), `decode_cognito_token(token: str) -> CurrentUser` (raises `jwt.InvalidTokenError` on failure), `get_current_user` (FastAPI dependency reading the `Authorization: Bearer <token>` header) — Task 8's routes depend on `get_current_user`.
+- Produces: `CurrentUser` (Pydantic model: `sub: str`, `email: str`, `role: str`), `decode_cognito_token(token: str) -> CurrentUser` (raises `jwt.InvalidTokenError` on failure), `get_current_user` (FastAPI dependency reading the `Authorization: Bearer <token>` header) — Task 7's `require_permission` depends on `get_current_user` directly, and Task 8's routes depend on it transitively through `require_permission`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -801,12 +823,14 @@ def cognito_tokens():
     }
 ```
 
-`tests/test_auth.py`:
+`tests/test_auth.py` (needs live Cognito for token retrieval and JWKS fetch, so marked `integration`):
 
 ```python
 import pytest
 
 from app.auth import decode_cognito_token
+
+pytestmark = pytest.mark.integration
 
 
 def test_decode_valid_viewer_token(cognito_tokens):
@@ -898,7 +922,7 @@ git commit -m "feat: add Cognito JWT verification"
 
 ---
 
-### Task 7: Guardrails — RBAC and evidence validation
+### Task 7: Guardrails — fine-grained permission matrix and evidence validation
 
 **Files:**
 - Create: `app/guardrails.py`
@@ -906,9 +930,17 @@ git commit -m "feat: add Cognito JWT verification"
 
 **Interfaces:**
 - Consumes: `CurrentUser` (Task 6), `PolicyEvidence` (Task 3)
-- Produces: `require_role(*allowed: str)` (returns a FastAPI dependency that 403s if `CurrentUser.role` isn't in `allowed`), `assert_evidence_present(evidence: list[PolicyEvidence], min_score: float = 0.3) -> list[PolicyEvidence]` (raises `InsufficientEvidenceError` if empty or all below `min_score`) — Task 8's routes use both.
+- Produces: `require_permission(permission: str)` (returns a FastAPI dependency that 403s if `CurrentUser.role` doesn't hold `permission`), `assert_evidence_present(evidence: list[PolicyEvidence], min_score: float = 0.3) -> list[PolicyEvidence]` (raises `InsufficientEvidenceError` if empty or all below `min_score`) — Task 8's routes use both.
 
-Per TDD §3.2 RBAC table: Viewer can read order/status/policy; Support Agent adds customer history + proposal creation; Operations Manager adds seller/delivery metrics + approval. So: `get_order`/`search_policy` → any role; `get_seller_metrics` → OperationsManager only; `estimate_delivery_risk`/`calculate_compensation` → SupportAgent or OperationsManager.
+Per TDD §3.2 RBAC table (Viewer: order/status/policy; Support Agent: + proposal creation; Operations Manager: + seller/delivery metrics), expressed as an explicit permission matrix rather than inline role lists — each route checks a named capability, not a role name directly, so adding a role or a tool later never means hunting through route code:
+
+| Permission | Viewer | SupportAgent | OperationsManager | Used by |
+|---|---|---|---|---|
+| `can_view_order` | ✅ | ✅ | ✅ | `get_order` |
+| `can_search_policy` | ✅ | ✅ | ✅ | `search_policy` |
+| `can_view_delivery_risk` | ❌ | ✅ | ✅ | `estimate_delivery_risk` |
+| `can_propose_compensation` | ❌ | ✅ | ✅ | `calculate_compensation` |
+| `can_view_seller_metrics` | ❌ | ❌ | ✅ | `get_seller_metrics` |
 
 - [ ] **Step 1: Write the failing test**
 
@@ -919,22 +951,29 @@ import pytest
 from fastapi import HTTPException
 
 from app.auth import CurrentUser
-from app.guardrails import InsufficientEvidenceError, assert_evidence_present, require_role
+from app.guardrails import InsufficientEvidenceError, assert_evidence_present, require_permission
 from app.schemas import PolicyEvidence
 
 
-def test_require_role_allows_matching_role():
-    dependency = require_role("OperationsManager")
+def test_require_permission_allows_role_that_has_it():
+    dependency = require_permission("can_view_seller_metrics")
     user = CurrentUser(sub="1", email="a@b.com", role="OperationsManager")
     assert dependency(current_user=user) == user
 
 
-def test_require_role_rejects_other_role():
-    dependency = require_role("OperationsManager")
+def test_require_permission_rejects_role_without_it():
+    dependency = require_permission("can_view_seller_metrics")
     user = CurrentUser(sub="1", email="a@b.com", role="Viewer")
     with pytest.raises(HTTPException) as exc_info:
         dependency(current_user=user)
     assert exc_info.value.status_code == 403
+
+
+def test_support_agent_can_propose_compensation_but_not_view_seller_metrics():
+    user = CurrentUser(sub="1", email="a@b.com", role="SupportAgent")
+    assert require_permission("can_propose_compensation")(current_user=user) == user
+    with pytest.raises(HTTPException):
+        require_permission("can_view_seller_metrics")(current_user=user)
 
 
 def test_assert_evidence_present_raises_when_empty():
@@ -947,6 +986,8 @@ def test_assert_evidence_present_raises_when_all_low_score():
     with pytest.raises(InsufficientEvidenceError):
         assert_evidence_present(low, min_score=0.3)
 ```
+
+(These are pure in-memory tests, no DB/network — do not mark them `@pytest.mark.integration`.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -963,15 +1004,30 @@ from fastapi import Depends, HTTPException
 from app.auth import CurrentUser, get_current_user
 from app.schemas import PolicyEvidence
 
+PERMISSIONS: dict[str, set[str]] = {
+    "Viewer": {"can_view_order", "can_search_policy"},
+    "SupportAgent": {
+        "can_view_order", "can_search_policy",
+        "can_view_delivery_risk", "can_propose_compensation",
+    },
+    "OperationsManager": {
+        "can_view_order", "can_search_policy", "can_view_delivery_risk",
+        "can_propose_compensation", "can_view_seller_metrics",
+    },
+}
+
 
 class InsufficientEvidenceError(Exception):
     pass
 
 
-def require_role(*allowed: str):
+def require_permission(permission: str):
     def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if current_user.role not in allowed:
-            raise HTTPException(status_code=403, detail=f"Role '{current_user.role}' cannot access this resource")
+        if permission not in PERMISSIONS.get(current_user.role, set()):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{current_user.role}' lacks permission '{permission}'",
+            )
         return current_user
     return dependency
 
@@ -992,7 +1048,7 @@ Expected: PASS
 
 ```bash
 git add app/guardrails.py tests/test_guardrails.py
-git commit -m "feat: add RBAC and evidence guardrails"
+git commit -m "feat: add fine-grained permission matrix and evidence guardrail"
 ```
 
 ---
@@ -1013,11 +1069,14 @@ git commit -m "feat: add RBAC and evidence guardrails"
 `tests/test_routes.py`:
 
 ```python
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 client = TestClient(app)
+
+pytestmark = pytest.mark.integration
 
 
 def _auth(token):
@@ -1061,6 +1120,8 @@ def test_policy_search_returns_citations(cognito_tokens):
     assert "doc_id" in resp.json()[0]
 ```
 
+(`pytestmark = pytest.mark.integration` marks every test in this file — they all need the live FastAPI app talking to real Postgres/Qdrant/Cognito. Task 10's CI workflow excludes this marker.)
+
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_routes.py -v`
@@ -1077,9 +1138,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser
 from app.db import get_engine
-from app.guardrails import InsufficientEvidenceError, assert_evidence_present, require_role
+from app.guardrails import InsufficientEvidenceError, assert_evidence_present, require_permission
 from app.schemas import CompensationProposal, OrderTimeline, PolicyEvidence, RiskAssessment, SellerMetrics
 from app.tools import calculate_compensation, estimate_delivery_risk, get_order, get_seller_metrics, search_policy
 
@@ -1100,7 +1161,10 @@ def _log_audit(user: CurrentUser, tool_name: str, outcome: str) -> None:
 
 
 @router.get("/orders/{order_id}", response_model=OrderTimeline)
-def read_order(order_id: str, current_user: CurrentUser = Depends(get_current_user)):
+def read_order(
+    order_id: str,
+    current_user: CurrentUser = Depends(require_permission("can_view_order")),
+):
     result = get_order(order_id)
     _log_audit(current_user, "get_order", "success" if result else "not_found")
     if result is None:
@@ -1111,7 +1175,7 @@ def read_order(order_id: str, current_user: CurrentUser = Depends(get_current_us
 @router.get("/sellers/{seller_id}/metrics", response_model=SellerMetrics)
 def read_seller_metrics(
     seller_id: str,
-    current_user: CurrentUser = Depends(require_role("OperationsManager")),
+    current_user: CurrentUser = Depends(require_permission("can_view_seller_metrics")),
 ):
     result = get_seller_metrics(seller_id)
     _log_audit(current_user, "get_seller_metrics", "success" if result else "not_found")
@@ -1121,7 +1185,11 @@ def read_seller_metrics(
 
 
 @router.get("/policy/search", response_model=list[PolicyEvidence])
-def read_policy_search(query: str, domain: str | None = None, current_user: CurrentUser = Depends(get_current_user)):
+def read_policy_search(
+    query: str,
+    domain: str | None = None,
+    current_user: CurrentUser = Depends(require_permission("can_search_policy")),
+):
     results = search_policy(query, domain=domain)
     try:
         results = assert_evidence_present(results)
@@ -1135,7 +1203,7 @@ def read_policy_search(query: str, domain: str | None = None, current_user: Curr
 @router.get("/orders/{order_id}/risk", response_model=RiskAssessment)
 def read_delivery_risk(
     order_id: str,
-    current_user: CurrentUser = Depends(require_role("SupportAgent", "OperationsManager")),
+    current_user: CurrentUser = Depends(require_permission("can_view_delivery_risk")),
 ):
     result = estimate_delivery_risk(order_id)
     _log_audit(current_user, "estimate_delivery_risk", "success" if result else "not_found")
@@ -1147,7 +1215,7 @@ def read_delivery_risk(
 @router.get("/orders/{order_id}/compensation", response_model=CompensationProposal)
 def read_compensation_proposal(
     order_id: str,
-    current_user: CurrentUser = Depends(require_role("SupportAgent", "OperationsManager")),
+    current_user: CurrentUser = Depends(require_permission("can_propose_compensation")),
 ):
     result = calculate_compensation(order_id)
     _log_audit(current_user, "calculate_compensation", "success" if result else "not_found")
@@ -1155,6 +1223,8 @@ def read_compensation_proposal(
         raise HTTPException(status_code=404, detail="Order or active policy not found")
     return result
 ```
+
+`get_current_user` is no longer imported directly in this file — every route now goes through `require_permission`, which itself depends on `get_current_user` (see Task 7). This is deliberate: every endpoint states its capability requirement explicitly, so `test_get_order_without_token_is_rejected` still exercises the same auth failure path (`require_permission` fails at the `get_current_user` step before the permission check ever runs).
 
 `app/main.py`:
 
@@ -1225,6 +1295,81 @@ docker exec -e PGPASSWORD="$LOCAL_PG_PASSWORD" shopops_postgres \
 ```
 
 Expected: one row per request made in Step 3, with the correct `tool_name`/`outcome`/`role_snapshot`.
+
+---
+
+### Task 10: CI — lint and unit tests on GitHub Actions
+
+**Files:**
+- Create: `.github/workflows/ci.yml`
+- Modify: `requirements.txt` (add `ruff`)
+
+**Interfaces:**
+- Consumes: the `integration` pytest marker (Task 2) to know which tests to skip — CI has no Postgres/Qdrant/Cognito available, so it runs only the fast, dependency-free tests (`test_schemas.py`, `test_guardrails.py`).
+
+This is a "checkbox" CI setup, not full environment provisioning: spinning up seeded Postgres + Qdrant + real Cognito test users inside a GitHub Actions runner is real infrastructure work with its own failure modes, disproportionate to what a lint+unit gate needs to prove. Integration tests keep running locally (Task 9) and are excluded here by design, not by oversight.
+
+- [ ] **Step 1: Add `ruff` and confirm the codebase lints clean**
+
+Append to `requirements.txt`:
+
+```
+ruff>=0.7
+```
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+ruff check .
+```
+
+Fix anything it flags in `app/` or `tests/` before proceeding — a first CI run that immediately fails on pre-existing lint debt defeats the point of adding it.
+
+- [ ] **Step 2: Confirm the unit-only test subset passes locally**
+
+```bash
+pytest -m "not integration" -v
+```
+
+Expected: PASS — only `tests/test_schemas.py` and `tests/test_guardrails.py` should run (both have zero external dependencies); everything else is skipped by the marker filter.
+
+- [ ] **Step 3: Write the workflow**
+
+`.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      - name: Run unit tests (integration tests need local Postgres/Qdrant/Cognito — excluded here, see Task 9)
+        run: pytest -m "not integration" -v
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .github/workflows/ci.yml requirements.txt
+git commit -m "chore: add CI workflow for lint and unit tests"
+```
+
+Pushing this to GitHub to see the workflow actually trigger is optional and up to you — Steps 1-2's local dry run already prove the commands the workflow runs are correct.
 
 ---
 
