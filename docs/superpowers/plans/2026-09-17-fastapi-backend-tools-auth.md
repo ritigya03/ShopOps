@@ -653,6 +653,8 @@ Compensation tiers (POL-COMP-001 §3): minor = 10%, moderate = 25%, severe = 50%
 `tests/test_calc_tools.py` (pick a real late-delivered order and a real on-time order from the data — run a quick query against `shopops_data.orders` locally to find one of each if these specific IDs don't fit). Needs the live local Postgres container, so marked `integration`:
 
 ```python
+from decimal import Decimal
+
 import pytest
 
 from app.tools import calculate_compensation, estimate_delivery_risk
@@ -677,6 +679,21 @@ def test_calculate_compensation_not_eligible_when_on_time():
 
 def test_calculate_compensation_unknown_order_returns_none():
     assert calculate_compensation("does-not-exist") is None
+
+
+def test_calculate_compensation_eligible_moderate_delay():
+    # 33a3edb84b9df4cb49546859b990ac6d: estimated 2018-03-16, delivered
+    # 2018-03-22 (6 days late -> moderate); order_value = 67.50 in the DB.
+    # This exercises the actual proposal-computation path (order_value * pct)
+    # that the two tests above never reach, since both return early on
+    # ineligibility.
+    result = calculate_compensation("33a3edb84b9df4cb49546859b990ac6d")
+    assert result is not None
+    assert result.eligible is True
+    assert result.severity == "moderate"
+    assert result.compensation_percentage == 0.25
+    assert result.proposed_amount == Decimal("67.50") * Decimal("0.25")
+    assert result.cap_applied is False
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -689,11 +706,16 @@ Expected: FAIL with `ImportError: cannot import name 'calculate_compensation'`
 Append to `app/tools.py`:
 
 ```python
+from decimal import Decimal
+
 from app.schemas import CompensationProposal, RiskAssessment
 
 _SEVERITY_BANDS = [(3, "minor"), (7, "moderate")]  # >3 and <=7 -> moderate; >7 -> severe
-_COMPENSATION_PCT = {"minor": 0.10, "moderate": 0.25, "severe": 0.50}
-_SEVERE_CAP = 150
+# Decimal, not float: order_value comes back from Postgres as a Decimal
+# (NUMERIC column), and Decimal * float raises TypeError in Python —
+# both operands must be Decimal.
+_COMPENSATION_PCT = {"minor": Decimal("0.10"), "moderate": Decimal("0.25"), "severe": Decimal("0.50")}
+_SEVERE_CAP = Decimal("150")
 
 
 def _severity_for_delay(delay_days: int) -> str:
@@ -752,11 +774,11 @@ def calculate_compensation(order_id: str, policy_version: str = "1.0") -> Option
         """), {"doc_id": doc_id, "version": policy_version}).mappings().first()
 
     if policy_row is None or policy_row["status"] != "active":
-        return None  # unknown order_id is also routed here below; distinguished next
+        return None  # no active policy at this version — nothing to propose against
 
     risk = estimate_delivery_risk(order_id)
     if risk is None:
-        return None
+        return None  # order_id doesn't exist
 
     eligibility_query = text("""
         SELECT order_status, order_value FROM shopops_views.vw_compensation_eligibility
