@@ -87,3 +87,13 @@ class ActionSummary(BaseModel):
     proposed_amount: Decimal | None
     severity: str | None
     reason: str | None
+
+
+class AuditEventSummary(BaseModel):
+    event_id: str
+    occurred_at: datetime
+    user_id: str
+    role_snapshot: str
+    tool_name: str
+    outcome: str
+    policy_version: str | None

@@ -10,6 +10,7 @@ from app.agent.nodes import ABSTENTION_MESSAGE, propose_or_finalize
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.audit import log_audit
+from app.audit_log import list_audit_events
 from app.auth import CurrentUser, get_current_user
 from app.conversations import (
     append_messages,
@@ -25,6 +26,7 @@ from app.guardrails import (
 from app.schemas import (
     ActionReceipt,
     ActionSummary,
+    AuditEventSummary,
     ChatRequest,
     ChatResponse,
     CompensationProposal,
@@ -236,3 +238,11 @@ def reject_action(
     current_user: CurrentUser = Depends(require_permission("can_approve_compensation")),
 ):
     return resolve_action(action_id, current_user, approve=False)
+
+
+@router.get("/audit-events", response_model=list[AuditEventSummary])
+def read_audit_events(
+    limit: int = 50,
+    current_user: CurrentUser = Depends(require_permission("can_view_audit_log")),
+):
+    return list_audit_events(limit)
