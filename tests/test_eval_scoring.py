@@ -1,4 +1,9 @@
-from scripts.eval_agent import load_cases, score_abstention, score_citation, score_tool_selection
+from scripts.eval_agent import (
+    load_cases,
+    score_abstention,
+    score_citation,
+    score_tool_selection,
+)
 
 
 def test_load_cases_parses_yaml(tmp_path):
