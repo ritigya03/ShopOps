@@ -191,10 +191,20 @@ docker compose down       # stop, keep data
 docker compose down -v    # stop and delete all data
 ```
 
-## AWS RDS (cloud target)
+## AWS RDS (quick local experiment against a public RDS instance)
 
-To point the same schema/ingestion at an RDS PostgreSQL instance instead of
-local Docker:
+**For a real production deployment, see `infra/README.md`** — it
+provisions a full stack (EC2 + non-publicly-accessible RDS + self-hosted
+Qdrant + Cognito + Nginx/SSL + GitHub Actions) and is the authoritative
+production runbook. The RDS instance it creates is **never publicly
+accessible** and the app reads `LOCAL_DATABASE_URL` for it, per
+`app/config.py`.
+
+The steps below are a different, smaller thing: pointing your local dev
+checkout's schema/ingestion at a lightweight, temporary, publicly-reachable
+RDS instance (e.g. to poke at cloud Postgres without spinning up the full
+production stack). It uses `DATABASE_URL`, not `LOCAL_DATABASE_URL` —
+don't confuse the two.
 
 1. Create the RDS instance (PostgreSQL, Free Tier `db.t3.micro`), with
    **Public access = Yes** and its security group's inbound rule restricted
