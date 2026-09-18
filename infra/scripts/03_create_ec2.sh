@@ -26,6 +26,7 @@ INSTANCE_ID="$(aws ec2 run-instances --region "$REGION" \
   --key-name "$KEY_NAME" \
   --security-group-ids "$EC2_SG_ID" \
   --subnet-id "$SUBNET_ID" \
+  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=20,VolumeType=gp3}' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=shopops-prod}]' \
   --query 'Instances[0].InstanceId' --output text)"
 
