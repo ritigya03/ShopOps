@@ -1,14 +1,16 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Activity, ArrowUpRight, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileText, Filter, LayoutDashboard, Menu, MoreHorizontal, PackageSearch, PanelLeft, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Store, X } from 'lucide-react'
-import { activity, auditEntries, navItems, orders, roles, sellers, timeline, volume } from '@/lib/mock-data'
+import { activity, navItems, roles, volume } from '@/lib/mock-data'
 import { AuthError, getSession, login, logout, type Role, type Session } from '@/lib/auth'
 import { streamChat, type ChatDone } from '@/lib/chat'
 import type { CompensationProposal, PolicyEvidence } from '@/lib/types'
 import { approveAction, listActions, rejectAction, type ActionSummary } from '@/lib/actions'
+import { getOrder, type OrderTimelineResult } from '@/lib/orders'
+import { getSellerMetrics, type SellerMetricsResult } from '@/lib/sellers'
+import { listAuditEvents, type AuditEventSummary } from '@/lib/audit'
 
 const iconMap: Record<string, any> = { LayoutDashboard, Sparkles, PackageSearch, Store, ClipboardCheck, ScrollText: FileText }
 
@@ -24,8 +26,6 @@ function Sidebar({ path, role, email, onLogout, collapsed, setCollapsed }: { pat
 function TopHeader({ title, subtitle, onMenu }: { title: string; subtitle?: string; onMenu: () => void }) { return <header className="top-header"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu size={19} /></button><div><div className="breadcrumbs"><span>Workspace</span><ChevronRight size={12} /><span className="font-medium text-ink">{title}</span></div>{subtitle && <p className="header-subtitle">{subtitle}</p>}</div><div className="header-actions"><button className="search-btn"><Search size={16} /><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-btn relative"><Bell size={17} /><i className="notification-dot" /></button><div className="avatar">AM</div></div></header> }
 
 function StatCard({ label, value, delta, icon, tone }: { label: string; value: string; delta: string; icon: React.ReactNode; tone: string }) { return <div className="stat-card"><div className={`stat-icon ${tone}`}>{icon}</div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-delta"><ArrowUpRight size={13} />{delta}</div></div> }
-
-function Timeline() { return <div className="timeline">{timeline.map((step, i) => <div className="timeline-step" key={step.label}><div className={`timeline-node ${step.state}`}>{step.state === 'complete' ? <Check size={12} /> : step.state === 'current' ? <span /> : null}</div>{i < timeline.length - 1 && <div className={`timeline-line ${step.state === 'pending' ? 'pending' : ''}`} />}<div className="timeline-copy"><div className="text-xs font-semibold">{step.label}</div><div className="text-[10px] text-muted mt-1">{step.date}</div></div></div>)}</div> }
 
 function Citation({ citation }: { citation: PolicyEvidence }) {
   const [open, setOpen] = useState(false)
@@ -138,9 +138,98 @@ function ChatPage({ session }: { session: Session }) {
 
 function Dashboard() { return <div className="page-content"><div className="page-intro"><div><div className="section-kicker">Tuesday, June 24, 2025</div><h1>Good morning, Alex</h1><p>Here&apos;s what&apos;s happening across operations.</p></div><a href="/dashboard/chat" className="primary-btn"><Sparkles size={15} />Ask ShopOps AI</a></div><div className="stat-grid"><StatCard label="Total orders" value="12,842" delta="8.2% vs last week" icon={<PackageSearch size={17} />} tone="mint" /><StatCard label="Pending approvals" value="3" delta="2 need attention" icon={<ClipboardCheck size={17} />} tone="yellow" /><StatCard label="Avg delivery time" value="3.4d" delta="0.3d faster" icon={<Clock3 size={17} />} tone="peach" /><StatCard label="Active sellers" value="284" delta="12 new this month" icon={<Store size={17} />} tone="coral" /></div><div className="dashboard-grid"><div className="soft-card chart-card"><div className="card-heading"><div><div className="section-kicker">Operations pulse</div><h2>Order volume</h2></div><button className="filter-pill">Last 7 days <ChevronDown size={13} /></button></div><ResponsiveContainer width="100%" height={250}><AreaChart data={volume} margin={{ left: -25, right: 8, top: 20 }}><defs><linearGradient id="mintArea" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a8e6cf" stopOpacity={0.55} /><stop offset="95%" stopColor="#a8e6cf" stopOpacity={0.03} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9efec" /><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#85938e' }} /><YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#85938e' }} /><Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #e2ebe6', fontSize: 12 }} /><Area type="monotone" dataKey="orders" stroke="#559c83" strokeWidth={2.5} fill="url(#mintArea)" /></AreaChart></ResponsiveContainer></div><div className="soft-card activity-card"><div className="card-heading"><div><div className="section-kicker">Live feed</div><h2>Recent activity</h2></div><button className="icon-btn"><MoreHorizontal size={17} /></button></div><div>{activity.map((item) => <div className="activity-row" key={item.title}><div className={`activity-marker ${item.tone}`}><Check size={12} /></div><div className="flex-1 min-w-0"><div className="text-xs font-semibold">{item.title}</div><div className="text-[11px] text-muted mt-1 truncate">{item.detail}</div></div><time>{item.time}</time></div>)}</div><a href="/dashboard/audit" className="view-all">View audit log <ArrowUpRight size={13} /></a></div></div></div> }
 
-function OrdersPage() { const [selected, setSelected] = useState<any>(null); const [query, setQuery] = useState(''); const filtered = orders.filter((o) => o.id.includes(query.toLowerCase()) || o.seller.toLowerCase().includes(query.toLowerCase())); return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Operations / fulfillment</div><h1>Orders</h1><p>Investigate delivery status and customer outcomes.</p></div><button className="outline-btn"><Filter size={14} />Filters</button></div><div className="soft-card table-card"><div className="table-toolbar"><div className="table-search"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search order or seller" /></div><div className="toolbar-right"><button className="filter-pill">All statuses <ChevronDown size={13} /></button><button className="icon-btn"><MoreHorizontal size={17} /></button></div></div><div className="table-wrap"><table><thead><tr><th>Order ID</th><th>Status</th><th>Purchase date</th><th>Estimated delivery</th><th>Seller</th><th>Value</th><th>State</th></tr></thead><tbody>{filtered.map((order) => <tr key={order.id} onClick={() => setSelected(order)}><td className="font-semibold">{order.id}</td><td><StatusBadge status={order.status} /></td><td>{order.purchase}</td><td>{order.eta}</td><td>{order.seller}</td><td className="font-medium">{order.value}</td><td><span className={order.state === 'Delayed' ? 'coral-text' : 'muted-state'}>{order.state}</span></td></tr>)}</tbody></table></div></div><AnimatePresence>{selected && <><motion.div className="drawer-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelected(null)} /><motion.aside className="order-drawer" initial={{ x: 420 }} animate={{ x: 0 }} exit={{ x: 420 }}><div className="drawer-head"><div><div className="section-kicker">Order investigation</div><h2>{selected.id}</h2></div><button className="icon-btn" onClick={() => setSelected(null)}><X size={17} /></button></div><StatusBadge status={selected.status} /><div className="drawer-section"><div className="section-kicker">Timeline</div><Timeline /></div><div className="drawer-section"><div className="section-kicker">Order details</div><div className="detail-list"><div><span>Seller</span><strong>{selected.seller}</strong></div><div><span>Order value</span><strong>{selected.value}</strong></div><div><span>Payment</span><strong>Pix</strong></div><div><span>Purchase date</span><strong>{selected.purchase}</strong></div><div><span>Estimated delivery</span><strong>{selected.eta}</strong></div></div></div><a href="/dashboard/chat" className="primary-btn w-full justify-center">Investigate with AI <Sparkles size={15} /></a></motion.aside></>}</AnimatePresence></div> }
+function OrdersPage() {
+  const [query, setQuery] = useState('')
+  const [order, setOrder] = useState<OrderTimelineResult | null | undefined>(undefined)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-function SellersPage() { return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Manager workspace</div><h1>Seller performance</h1><p>Aggregate performance signals across your marketplace.</p></div><button className="outline-btn"><Filter size={14} />Filters</button></div><div className="stat-grid seller-stats"><StatCard label="Total sellers" value="284" delta="12 new this month" icon={<Store size={17} />} tone="mint" /><StatCard label="Avg late delivery" value="12.8%" delta="1.4% improvement" icon={<Clock3 size={17} />} tone="yellow" /><StatCard label="Avg review score" value="4.6 / 5" delta="0.2 vs last month" icon={<Activity size={17} />} tone="peach" /></div><div className="soft-card table-card"><div className="card-heading"><div><div className="section-kicker">Marketplace health</div><h2>Seller directory</h2></div><div className="text-xs text-muted">Updated 12 min ago</div></div><div className="table-wrap"><table><thead><tr><th>Seller ID</th><th>City</th><th>State</th><th>Total orders</th><th>Late delivery</th><th>Review score</th><th /></tr></thead><tbody>{sellers.map((seller) => <tr key={seller.id}><td className="font-semibold">{seller.id}</td><td>{seller.city}</td><td>{seller.state}</td><td>{seller.orders}</td><td><span className={`rate ${seller.late > 20 ? 'high' : seller.late >= 10 ? 'medium' : 'low'}`}>{seller.late}%</span></td><td><span className="score">{seller.score}</span></td><td><a href="/dashboard/chat" className="ask-link">Ask AI <ArrowUpRight size={13} /></a></td></tr>)}</tbody></table></div></div></div> }
+  const search = async () => {
+    const id = query.trim()
+    if (!id) return
+    setLoading(true)
+    setError(null)
+    try {
+      setOrder(await getOrder(id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load order.')
+      setOrder(undefined)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return <div className="page-content">
+    <div className="page-intro compact">
+      <div><div className="section-kicker">Operations / fulfillment</div><h1>Orders</h1><p>Look up an order by ID to investigate delivery status.</p></div>
+    </div>
+    <div className="soft-card table-card">
+      <div className="table-toolbar">
+        <div className="table-search"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="Enter an order ID…" /></div>
+        <button className="primary-btn" onClick={search} disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+      </div>
+      {error && <p className="text-xs coral-text mt-2">{error}</p>}
+      {order === null && <p className="text-sm text-muted mt-2">No order found with that ID.</p>}
+    </div>
+    {order && <div className="soft-card p-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div><div className="section-kicker">Order</div><div className="font-semibold mt-1">{order.order_id} <span className="text-muted font-normal">· {order.seller_count} seller(s)</span></div></div>
+        <StatusBadge status={order.order_status} />
+      </div>
+      <div className="detail-list">
+        <div><span>Order value</span><strong>R$ {Number(order.order_value).toFixed(2)}</strong></div>
+        <div><span>Purchase date</span><strong>{new Date(order.purchase_timestamp).toLocaleString()}</strong></div>
+        <div><span>Estimated delivery</span><strong>{new Date(order.estimated_delivery_date).toLocaleString()}</strong></div>
+        <div><span>Delivered</span><strong>{order.delivered_customer_date ? new Date(order.delivered_customer_date).toLocaleString() : '—'}</strong></div>
+      </div>
+      <a href="/dashboard/chat" className="primary-btn w-full justify-center mt-4">Investigate with AI <Sparkles size={15} /></a>
+    </div>}
+  </div>
+}
+
+function SellersPage() {
+  const [query, setQuery] = useState('')
+  const [seller, setSeller] = useState<SellerMetricsResult | null | undefined>(undefined)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const search = async () => {
+    const id = query.trim()
+    if (!id) return
+    setLoading(true)
+    setError(null)
+    try {
+      setSeller(await getSellerMetrics(id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load seller.')
+      setSeller(undefined)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return <div className="page-content">
+    <div className="page-intro compact">
+      <div><div className="section-kicker">Manager workspace</div><h1>Seller performance</h1><p>Look up a seller by ID for their performance metrics.</p></div>
+    </div>
+    <div className="soft-card table-card">
+      <div className="table-toolbar">
+        <div className="table-search"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="Enter a seller ID…" /></div>
+        <button className="primary-btn" onClick={search} disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+      </div>
+      {error && <p className="text-xs coral-text mt-2">{error}</p>}
+      {seller === null && <p className="text-sm text-muted mt-2">No seller found with that ID.</p>}
+    </div>
+    {seller && <div className="soft-card p-4 mt-4">
+      <div className="font-semibold mb-3">{seller.seller_id}</div>
+      <div className="detail-list">
+        <div><span>Total orders</span><strong>{seller.order_count}</strong></div>
+        <div><span>Late delivery rate</span><strong>{(seller.late_delivery_rate * 100).toFixed(1)}%</strong></div>
+        <div><span>Avg review score</span><strong>{seller.avg_review_score != null ? seller.avg_review_score.toFixed(1) : '—'}</strong></div>
+      </div>
+    </div>}
+  </div>
+}
 
 type ApprovalTab = 'pending' | 'approved' | 'rejected' | 'expired'
 
@@ -226,7 +315,36 @@ function ApprovalsPage() {
   </div>
 }
 
-function AuditPage() { return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Governance & compliance</div><h1>Audit log</h1><p>An append-only record of agent actions and evidence access.</p></div><button className="outline-btn"><Filter size={14} />Filters</button></div><div className="audit-filters"><button className="filter-pill">Action type <ChevronDown size={13} /></button><button className="filter-pill">Outcome <ChevronDown size={13} /></button><button className="filter-pill">User <ChevronDown size={13} /></button><div className="ml-auto text-xs text-muted">Showing last 30 days</div></div><div className="soft-card audit-card"><div className="audit-header"><div className="section-kicker">Activity timeline</div><span className="text-xs text-muted">5 events</span></div>{auditEntries.map((entry, i) => <div className="audit-row" key={i}><div className={`audit-icon ${entry.outcome === 'Denied' ? 'denied' : ''}`}>{entry.outcome === 'Denied' ? <X size={13} /> : <Check size={13} />}</div><div className="audit-time">{entry.time}</div><div className="audit-main"><div><strong>{entry.action}</strong><span className="audit-arrow">→</span><code>{entry.tool}</code></div><div className="text-xs text-muted mt-1">{entry.user} · {entry.role}</div></div><span className={`outcome ${entry.outcome === 'Denied' ? 'denied-text' : ''}`}>{entry.outcome}</span></div>)}</div></div> }
+function AuditPage() {
+  const [events, setEvents] = useState<AuditEventSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listAuditEvents()
+      .then(setEvents)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load audit events.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return <div className="page-content">
+    <div className="page-intro compact">
+      <div><div className="section-kicker">Governance &amp; compliance</div><h1>Audit log</h1><p>An append-only record of agent actions and evidence access.</p></div>
+    </div>
+    {error && <p className="text-xs coral-text mb-2">{error}</p>}
+    <div className="soft-card audit-card">
+      <div className="audit-header"><div className="section-kicker">Activity timeline</div><span className="text-xs text-muted">{events.length} events</span></div>
+      {loading && <p className="text-sm text-muted py-2">Loading…</p>}
+      {!loading && events.length === 0 && <p className="text-sm text-muted py-2">No activity yet.</p>}
+      {events.map((entry) => <div className="audit-row" key={entry.event_id}>
+        <div className={`audit-icon ${entry.outcome === 'denied' ? 'denied' : ''}`}>{entry.outcome === 'denied' ? <X size={13} /> : <Check size={13} />}</div>
+        <div className="audit-time">{new Date(entry.occurred_at).toLocaleString()}</div>
+        <div className="audit-main"><div><code>{entry.tool_name}</code></div><div className="text-xs text-muted mt-1">{entry.user_id} · {entry.role_snapshot}</div></div>
+        <span className={`outcome ${entry.outcome === 'denied' ? 'denied-text' : ''}`}>{entry.outcome}</span>
+      </div>)}
+    </div>
+  </div>
+}
 
 function Login({ onLogin }: { onLogin: () => void }) {
   const [email, setEmail] = useState('')
