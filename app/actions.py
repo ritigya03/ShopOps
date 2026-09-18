@@ -7,7 +7,7 @@ from sqlalchemy import text
 from app.audit import log_audit
 from app.auth import CurrentUser
 from app.db import get_engine
-from app.schemas import ActionReceipt
+from app.schemas import ActionReceipt, ActionSummary
 from app.tools import calculate_compensation
 
 
@@ -67,3 +67,35 @@ def resolve_action(action_id: str, user: CurrentUser, approve: bool) -> ActionRe
         order_id=row["order_id"], proposed_amount=approved_amount,
         occurred_at=datetime.now(timezone.utc),
     )
+
+
+def list_actions(status: str | None) -> list[ActionSummary]:
+    query = """
+        SELECT action_id, order_id, status, requested_by, approved_by, policy_version,
+               expires_at, approved_amount, created_at,
+               (expires_at IS NOT NULL AND expires_at < now()) AS is_expired
+        FROM shopops_ops.action_requests
+    """
+    params: dict = {}
+    if status:
+        query += " WHERE status = :status"
+        params["status"] = status
+    query += " ORDER BY created_at DESC"
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(query), params).mappings().all()
+
+    summaries = []
+    for row in rows:
+        proposal = calculate_compensation(row["order_id"], row["policy_version"])
+        amount = row["approved_amount"] if row["status"] == "SUCCEEDED" else (proposal.proposed_amount if proposal else None)
+        summaries.append(ActionSummary(
+            action_id=str(row["action_id"]), order_id=row["order_id"], status=row["status"],
+            requested_by=row["requested_by"], approved_by=row["approved_by"],
+            policy_version=row["policy_version"], expires_at=row["expires_at"],
+            is_expired=row["is_expired"], created_at=row["created_at"],
+            proposed_amount=amount,
+            severity=proposal.severity if proposal else None,
+            reason=proposal.reason if proposal else None,
+        ))
+    return summaries

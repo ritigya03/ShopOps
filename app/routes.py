@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.actions import resolve_action
+from app.actions import list_actions, resolve_action
 from app.agent.graph import AGENT_GRAPH, ROUTING_GRAPH
 from app.agent.llm import stream_model
 from app.agent.nodes import ABSTENTION_MESSAGE, propose_or_finalize
@@ -24,6 +24,7 @@ from app.guardrails import (
 )
 from app.schemas import (
     ActionReceipt,
+    ActionSummary,
     ChatRequest,
     ChatResponse,
     CompensationProposal,
@@ -211,6 +212,14 @@ def chat_stream(
             yield _sse_event("error", {"detail": str(exc)})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/actions", response_model=list[ActionSummary])
+def read_actions(
+    status: str | None = None,
+    current_user: CurrentUser = Depends(require_permission("can_approve_compensation")),
+):
+    return list_actions(status)
 
 
 @router.post("/actions/{action_id}/approve", response_model=ActionReceipt)

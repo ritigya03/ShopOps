@@ -72,3 +72,18 @@ class ActionReceipt(BaseModel):
     order_id: str
     proposed_amount: Decimal | None
     occurred_at: datetime
+
+
+class ActionSummary(BaseModel):
+    action_id: str
+    order_id: str
+    status: str
+    requested_by: str
+    approved_by: str | None
+    policy_version: str
+    expires_at: datetime | None
+    is_expired: bool
+    created_at: datetime
+    proposed_amount: Decimal | None
+    severity: str | None
+    reason: str | None
