@@ -15,6 +15,9 @@ class Settings:
     gemini_api_key: str = os.environ["GEMINI_API_KEY"]
     agent_model: str = os.environ.get("AGENT_MODEL", "gemini/gemini-3.1-flash-lite")
     cors_origins: list[str] = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+    log_level: str = os.environ.get("LOG_LEVEL", "INFO")
+    cloudwatch_log_group: str | None = os.environ.get("CLOUDWATCH_LOG_GROUP")
+    cloudwatch_log_stream: str = os.environ.get("CLOUDWATCH_LOG_STREAM", "shopops-api")
 
 
 settings = Settings()
