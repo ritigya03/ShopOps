@@ -12,6 +12,8 @@ class Settings:
     cognito_region: str = os.environ["COGNITO_REGION"]
     cognito_user_pool_id: str = os.environ["COGNITO_USER_POOL_ID"]
     cognito_app_client_id: str = os.environ["COGNITO_APP_CLIENT_ID"]
+    gemini_api_key: str = os.environ["GEMINI_API_KEY"]
+    agent_model: str = os.environ.get("AGENT_MODEL", "gemini/gemini-2.0-flash")
 
 
 settings = Settings()

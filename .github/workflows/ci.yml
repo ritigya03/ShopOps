@@ -28,4 +28,5 @@ jobs:
           COGNITO_REGION: "us-east-1"
           COGNITO_USER_POOL_ID: "dummy"
           COGNITO_APP_CLIENT_ID: "dummy"
+          GEMINI_API_KEY: "dummy"
         run: pytest -m "not integration" -v
