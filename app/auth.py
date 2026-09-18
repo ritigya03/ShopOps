@@ -49,7 +49,14 @@ def decode_cognito_token(token: str) -> CurrentUser:
     return CurrentUser(sub=sub, email=claims.get("email", ""), role=role)
 
 
-def get_current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
+async def get_current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
+    # Deliberately `async def`: FastAPI runs sync dependencies via
+    # run_in_threadpool, which executes them in a *copied* context, so the
+    # `user_id_var.set()` below would be discarded on return and every log
+    # line for the request would carry `user_id: null`. An async dependency
+    # runs on the event loop in the request's own context.
+    # decode_cognito_token stays sync (the JWKS client is cached and fast
+    # after the first call) and is called directly, not awaited.
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.removeprefix("Bearer ")

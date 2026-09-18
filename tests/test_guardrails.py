@@ -76,6 +76,50 @@ def test_unrecognized_role_denies_every_permission():
     assert exc_info.value.status_code == 403
 
 
+def test_require_permission_resolves_async_get_current_user_through_fastapi(monkeypatch):
+    # get_current_user is now `async def`; require_permission's inner
+    # `dependency` is a *sync* function that takes it via Depends(...).
+    # FastAPI awaits async sub-dependencies on the event loop and passes the
+    # resolved value into the sync outer dependency (which it runs in a
+    # threadpool), so this still works — pinned here rather than left to
+    # the Cognito-backed integration tests.
+    from fastapi import Depends, FastAPI
+    from fastapi.testclient import TestClient
+
+    import app.auth as auth_module
+    from app.auth import get_current_user
+    from app.observability.context import user_id_var
+
+    manager = CurrentUser(sub="mgr-1", email="mgr@example.com", role="OperationsManager")
+    viewer = CurrentUser(sub="view-1", email="view@example.com", role="Viewer")
+    tokens = {"manager-token": manager, "viewer-token": viewer}
+    monkeypatch.setattr(auth_module, "decode_cognito_token", lambda token: tokens[token])
+
+    api = FastAPI()
+
+    @api.get("/metrics")
+    def metrics(user: CurrentUser = Depends(require_permission("can_view_seller_metrics"))):
+        return {"sub": user.sub}
+
+    @api.get("/me")
+    def me(user: CurrentUser = Depends(get_current_user)):
+        return {"sub": user.sub}
+
+    try:
+        client = TestClient(api)
+        ok = client.get("/metrics", headers={"Authorization": "Bearer manager-token"})
+        assert ok.status_code == 200
+        assert ok.json() == {"sub": "mgr-1"}
+
+        denied = client.get("/metrics", headers={"Authorization": "Bearer viewer-token"})
+        assert denied.status_code == 403
+
+        # The plain Depends(get_current_user) path still 401s without a header.
+        assert client.get("/me").status_code == 401
+    finally:
+        user_id_var.set(None)
+
+
 def test_assert_evidence_present_filters_out_low_score_entries():
     # Confirms the *returned* list actually drops weak matches, not just
     # that a strong-enough list doesn't raise.

@@ -1,3 +1,5 @@
+import asyncio
+
 import jwt
 import pytest
 from fastapi import HTTPException
@@ -28,7 +30,11 @@ def test_get_current_user_rejects_token_with_unknown_kid():
         headers={"kid": "nonexistent-kid"},
     )
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user(authorization=f"Bearer {bogus_token}")
+        # get_current_user is `async def` (so FastAPI runs it on the event
+        # loop, in the request's own context, where its user_id_var.set()
+        # survives) — drive the coroutine with asyncio.run() rather than
+        # pulling in a pytest async plugin.
+        asyncio.run(get_current_user(authorization=f"Bearer {bogus_token}"))
     assert exc_info.value.status_code == 401
 
 
@@ -37,7 +43,7 @@ def test_get_current_user_rejects_missing_header():
     # 401 instead of FastAPI's own 422 request-validation rejection for a
     # required Header(...) parameter.
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user(authorization=None)
+        asyncio.run(get_current_user(authorization=None))
     assert exc_info.value.status_code == 401
 
 
@@ -47,11 +53,21 @@ def test_get_current_user_sets_user_id_context(monkeypatch):
     fake_user = CurrentUser(sub="user-123", email="u@example.com", role="Viewer")
     monkeypatch.setattr("app.auth.decode_cognito_token", lambda token: fake_user)
 
+    async def _call():
+        # Read user_id_var *inside* the coroutine: asyncio.run() wraps it in a
+        # Task, and a Task always runs in a copy of the caller's context, so
+        # the set() would not be observable from out here. FastAPI's own
+        # dependency resolution awaits async dependencies in the request's
+        # context (no Task hop), which is exactly what makes the async form
+        # work in production — tests/test_http_logging.py pins that end to end.
+        result = await get_current_user(authorization="Bearer sometoken")
+        return result, user_id_var.get()
+
     try:
-        result = get_current_user(authorization="Bearer sometoken")
+        result, user_id_in_context = asyncio.run(_call())
 
         assert result is fake_user
-        assert user_id_var.get() == "user-123"
+        assert user_id_in_context == "user-123"
     finally:
         # get_current_user has no request-scoped teardown of its own (that's
         # the HTTP middleware's job) — reset here so this contextvar mutation
