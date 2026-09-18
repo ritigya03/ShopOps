@@ -8,3 +8,5 @@ pgdata/
 .DS_Store
 data/eval/results/
 nginx/certs/
+infra/*.pem
+infra/outputs.env
