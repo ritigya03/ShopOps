@@ -12,7 +12,7 @@ PERMISSIONS: dict[str, set[str]] = {
     },
     "OperationsManager": {
         "can_view_order", "can_search_policy", "can_view_delivery_risk",
-        "can_propose_compensation", "can_view_seller_metrics",
+        "can_propose_compensation", "can_view_seller_metrics", "can_approve_compensation",
     },
 }
 

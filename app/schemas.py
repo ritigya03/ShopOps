@@ -63,3 +63,12 @@ class ChatResponse(BaseModel):
     citations: list[PolicyEvidence] = []
     proposal: CompensationProposal | None = None
     action_id: str | None = None
+
+
+class ActionReceipt(BaseModel):
+    action_id: str
+    status: str
+    approved_by: str | None
+    order_id: str
+    proposed_amount: Decimal | None
+    occurred_at: datetime

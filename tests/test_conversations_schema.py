@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.integration
 
@@ -33,7 +34,7 @@ def test_message_role_check_constraint_rejects_bad_role(engine):
         conn.execute(text("""
             INSERT INTO shopops_ops.conversations (conversation_id, user_id) VALUES (:id, :user_id)
         """), {"id": conversation_id, "user_id": "test-user"})
-        with pytest.raises(Exception):
+        with pytest.raises(IntegrityError):
             conn.execute(text("""
                 INSERT INTO shopops_ops.conversation_messages (conversation_id, turn_index, role, content)
                 VALUES (:id, 0, 'system', 'not allowed')

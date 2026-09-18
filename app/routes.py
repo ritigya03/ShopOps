@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.actions import resolve_action
 from app.agent.graph import AGENT_GRAPH
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentState
@@ -17,6 +18,7 @@ from app.guardrails import (
     require_permission,
 )
 from app.schemas import (
+    ActionReceipt,
     ChatRequest,
     ChatResponse,
     CompensationProposal,
@@ -150,3 +152,19 @@ def chat(
         proposal=proposal,
         action_id=action_id,
     )
+
+
+@router.post("/actions/{action_id}/approve", response_model=ActionReceipt)
+def approve_action(
+    action_id: str,
+    current_user: CurrentUser = Depends(require_permission("can_approve_compensation")),
+):
+    return resolve_action(action_id, current_user, approve=True)
+
+
+@router.post("/actions/{action_id}/reject", response_model=ActionReceipt)
+def reject_action(
+    action_id: str,
+    current_user: CurrentUser = Depends(require_permission("can_approve_compensation")),
+):
+    return resolve_action(action_id, current_user, approve=False)
