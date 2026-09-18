@@ -17,6 +17,8 @@ data/raw/            Olist source CSVs (9 files; geolocation not yet ingested)
 data/policy/          policy documents (empty for now)
 db/migrations/        SQL run automatically on first database startup
 scripts/ingest.py     loads the CSVs into shopops_data
+scripts/eval_agent.py LLM eval benchmark — see below
+data/eval/cases.yaml  eval benchmark case definitions
 docker-compose.yml     local PostgreSQL service
 ```
 
@@ -231,3 +233,44 @@ new account) — delete it from the console when you're done experimenting to
 avoid ongoing charges. `.env` currently keeps both the RDS values (active)
 and the local Docker values (commented out) so you can switch back by
 swapping which block is commented.
+
+## Eval benchmark
+
+`scripts/eval_agent.py` runs a fixed set of eval cases
+(`data/eval/cases.yaml`) through the real agent graph and scores three
+dimensions per case:
+
+- **tool selection** — did the agent call exactly the expected tools?
+- **citation** — did the cited evidence include the expected policy
+  `doc_id`? (skipped for cases with no `expected_citation_doc_id`)
+- **abstention** — did the graph's `abstain` flag match the expectation?
+
+It prints a per-case line plus aggregate accuracies, and writes a timestamped
+JSON file to `data/eval/results/` containing every case record and a summary
+(including the `agent_model` and git SHA the run used, for comparing runs).
+A case that raises is recorded with `status: "error"`, scored as a failure,
+and the run continues.
+
+```bash
+source .venv/bin/activate
+python scripts/eval_agent.py    # from the repo root
+```
+
+> **⚠️ This is not a read-only script.** Every case invokes the real agent
+> against the configured database, Gemini API key and Qdrant instance:
+>
+> - it writes **permanent** rows to `shopops_ops.audit_events`, which is
+>   append-only (a trigger blocks UPDATE/DELETE) — eval audit rows can never
+>   be cleaned up;
+> - cases where the agent proposes compensation insert a **real `PROPOSED`
+>   row** into `shopops_ops.action_requests`, which appears in the live
+>   Approvals dashboard like any human-originated proposal;
+> - it spends real Gemini API credits.
+>
+> Eval-created rows are tagged `requested_by='eval'`, and every created
+> `action_id` is printed and stored in the results JSON. To find or reject
+> them:
+>
+> ```sql
+> SELECT * FROM shopops_ops.action_requests WHERE requested_by = 'eval';
+> ```
