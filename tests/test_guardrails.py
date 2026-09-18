@@ -1,6 +1,7 @@
+from unittest.mock import Mock
+
 import pytest
 from fastapi import HTTPException
-from unittest.mock import Mock
 
 import app.guardrails as guardrails_module
 from app.auth import CurrentUser
