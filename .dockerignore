@@ -1,0 +1,11 @@
+.venv/
+.git/
+shop-ops-ai-frontend/node_modules/
+pgdata/
+.env
+.env.prod
+*.pem
+infra/outputs.env
+__pycache__/
+.pytest_cache/
+.ruff_cache/
