@@ -50,3 +50,16 @@ class CompensationProposal(BaseModel):
     order_value: Decimal | None = None
     proposed_amount: Decimal | None = None
     cap_applied: bool = False
+
+
+class ChatRequest(BaseModel):
+    conversation_id: str | None = None
+    message: str
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    answer: str
+    citations: list[PolicyEvidence] = []
+    proposal: CompensationProposal | None = None
+    action_id: str | None = None

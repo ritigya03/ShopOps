@@ -1,13 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.agent.graph import AGENT_GRAPH
+from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.state import AgentState
 from app.audit import log_audit
-from app.auth import CurrentUser
+from app.auth import CurrentUser, get_current_user
+from app.conversations import (
+    append_messages,
+    create_conversation,
+    get_conversation_owner,
+    load_recent_messages,
+)
 from app.guardrails import (
     InsufficientEvidenceError,
     assert_evidence_present,
     require_permission,
 )
 from app.schemas import (
+    ChatRequest,
+    ChatResponse,
     CompensationProposal,
     OrderTimeline,
     PolicyEvidence,
@@ -87,3 +98,55 @@ def read_compensation_proposal(
     if result is None:
         raise HTTPException(status_code=404, detail="Order or active policy not found")
     return result
+
+
+@router.post("/chat", response_model=ChatResponse)
+def chat(
+    request: ChatRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    if request.conversation_id:
+        owner = get_conversation_owner(request.conversation_id)
+        if owner is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if owner != current_user.sub:
+            raise HTTPException(status_code=403, detail="Conversation belongs to another user")
+        conversation_id = request.conversation_id
+        history = load_recent_messages(conversation_id)
+    else:
+        conversation_id = create_conversation(current_user.sub)
+        history = []
+
+    state: AgentState = {
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            *history,
+            {"role": "user", "content": request.message},
+        ],
+        "user": current_user,
+        "pending_tool_calls": [],
+        "tool_results": [],
+        "evidence": [],
+        "abstain": False,
+        "loop_count": 0,
+        "answer": None,
+        "proposal": None,
+    }
+
+    result = AGENT_GRAPH.invoke(state)
+    append_messages(conversation_id, request.message, result["answer"])
+
+    proposal = None
+    action_id = None
+    if result["proposal"] is not None:
+        proposal_fields = {k: v for k, v in result["proposal"].items() if k != "action_id"}
+        proposal = CompensationProposal(**proposal_fields)
+        action_id = result["proposal"]["action_id"]
+
+    return ChatResponse(
+        conversation_id=conversation_id,
+        answer=result["answer"],
+        citations=result["evidence"],
+        proposal=proposal,
+        action_id=action_id,
+    )
