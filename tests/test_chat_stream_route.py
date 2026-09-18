@@ -1,7 +1,9 @@
 import json
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.main import app
 
@@ -13,14 +15,17 @@ def _auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def _parse_sse(response) -> list[tuple[str, str]]:
+def _parse_sse(response) -> list[tuple[str, object]]:
+    # Every event's data line is JSON-encoded (see app/routes.py's
+    # _sse_event) - a raw multi-line chunk (e.g. a paragraph break in the
+    # model's answer) would otherwise break SSE framing.
     events = []
     event_name = None
     for line in response.iter_lines():
         if line.startswith("event: "):
             event_name = line.removeprefix("event: ")
         elif line.startswith("data: "):
-            events.append((event_name, line.removeprefix("data: ")))
+            events.append((event_name, json.loads(line.removeprefix("data: "))))
     return events
 
 
@@ -44,7 +49,7 @@ def test_stream_order_status_inquiry(cognito_tokens):
     full_answer = "".join(chunk_events)
     assert "delivered" in full_answer.lower()
 
-    done_payload = json.loads(done_events[0])
+    done_payload = done_events[0]
     assert done_payload["conversation_id"]
     assert done_payload["proposal"] is None
     assert done_payload["action_id"] is None
@@ -57,8 +62,7 @@ def test_stream_conversation_persists_and_is_loadable_via_chat(cognito_tokens):
         headers=_auth(cognito_tokens["Viewer"]),
     ) as resp:
         events = _parse_sse(resp)
-    done_payload = json.loads(next(d for name, d in events if name == "done"))
-    conversation_id = done_payload["conversation_id"]
+    conversation_id = next(d for name, d in events if name == "done")["conversation_id"]
 
     resp = client.post(
         "/chat",
@@ -80,15 +84,10 @@ def test_stream_failure_mid_answer_sends_error_and_does_not_persist(cognito_toke
     # model requests a tool on both allowed rounds, so routed["answer"]
     # is never set by route_or_tools and ROUTING_GRAPH.invoke() lands in
     # the streaming branch deterministically, with zero real Gemini calls.
-    import json as _json
-    from unittest.mock import Mock
-
-    from sqlalchemy import text
-
     def always_request_tool(*a, **kw):
         fn = Mock()
         fn.name = "get_order"
-        fn.arguments = _json.dumps({"order_id": "00010242fe8c5a6d1ba2dd792cb16214"})
+        fn.arguments = json.dumps({"order_id": "00010242fe8c5a6d1ba2dd792cb16214"})
         tool_call = Mock(id="call_x", function=fn)
         message = Mock(content=None, tool_calls=[tool_call])
         return Mock(choices=[Mock(message=message)])

@@ -166,8 +166,10 @@ def chat(
 
 
 def _sse_event(event: str, data: dict | str) -> str:
-    payload = data if isinstance(data, str) else json.dumps(data)
-    return f"event: {event}\ndata: {payload}\n\n"
+    # Always JSON-encode, even plain chunk text - a raw multi-line chunk
+    # (e.g. a paragraph break in the model's answer) would otherwise break
+    # SSE framing, since a "data:" line can't contain a literal newline.
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 @router.post("/chat/stream")
