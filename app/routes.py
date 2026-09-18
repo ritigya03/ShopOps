@@ -1,7 +1,12 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.actions import resolve_action
-from app.agent.graph import AGENT_GRAPH
+from app.agent.graph import AGENT_GRAPH, ROUTING_GRAPH
+from app.agent.llm import stream_model
+from app.agent.nodes import ABSTENTION_MESSAGE, propose_or_finalize
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.audit import log_audit
@@ -102,11 +107,7 @@ def read_compensation_proposal(
     return result
 
 
-@router.post("/chat", response_model=ChatResponse)
-def chat(
-    request: ChatRequest,
-    current_user: CurrentUser = Depends(get_current_user),
-):
+def _build_chat_state(request: ChatRequest, current_user: CurrentUser) -> tuple[str, AgentState]:
     if request.conversation_id:
         owner = get_conversation_owner(request.conversation_id)
         if owner is None:
@@ -134,16 +135,26 @@ def chat(
         "answer": None,
         "proposal": None,
     }
+    return conversation_id, state
+
+
+def _extract_proposal(proposal_data: dict | None) -> tuple[CompensationProposal | None, str | None]:
+    if proposal_data is None:
+        return None, None
+    proposal_fields = {k: v for k, v in proposal_data.items() if k != "action_id"}
+    return CompensationProposal(**proposal_fields), proposal_data["action_id"]
+
+
+@router.post("/chat", response_model=ChatResponse)
+def chat(
+    request: ChatRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    conversation_id, state = _build_chat_state(request, current_user)
 
     result = AGENT_GRAPH.invoke(state)
     append_messages(conversation_id, request.message, result["answer"])
-
-    proposal = None
-    action_id = None
-    if result["proposal"] is not None:
-        proposal_fields = {k: v for k, v in result["proposal"].items() if k != "action_id"}
-        proposal = CompensationProposal(**proposal_fields)
-        action_id = result["proposal"]["action_id"]
+    proposal, action_id = _extract_proposal(result["proposal"])
 
     return ChatResponse(
         conversation_id=conversation_id,
@@ -152,6 +163,52 @@ def chat(
         proposal=proposal,
         action_id=action_id,
     )
+
+
+def _sse_event(event: str, data: dict | str) -> str:
+    payload = data if isinstance(data, str) else json.dumps(data)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+@router.post("/chat/stream")
+def chat_stream(
+    request: ChatRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    conversation_id, state = _build_chat_state(request, current_user)
+
+    def event_stream():
+        try:
+            routed = ROUTING_GRAPH.invoke(state)
+
+            if routed["answer"] is not None:
+                answer = routed["answer"]
+                yield _sse_event("chunk", answer)
+            elif routed["abstain"]:
+                answer = ABSTENTION_MESSAGE
+                yield _sse_event("chunk", answer)
+            else:
+                pieces: list[str] = []
+                for delta in stream_model(routed["messages"]):
+                    pieces.append(delta)
+                    yield _sse_event("chunk", delta)
+                answer = "".join(pieces)
+
+            routed["answer"] = answer
+            final = propose_or_finalize(routed)
+            append_messages(conversation_id, request.message, answer)
+            proposal, action_id = _extract_proposal(final["proposal"])
+
+            yield _sse_event("done", {
+                "conversation_id": conversation_id,
+                "citations": [c.model_dump(mode="json") for c in final["evidence"]],
+                "proposal": proposal.model_dump(mode="json") if proposal else None,
+                "action_id": action_id,
+            })
+        except Exception as exc:  # noqa: BLE001 - must convert any failure into an SSE error event, never let it propagate mid-stream
+            yield _sse_event("error", {"detail": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/actions/{action_id}/approve", response_model=ActionReceipt)

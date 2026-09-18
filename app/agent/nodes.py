@@ -102,15 +102,18 @@ def validate_evidence(state: AgentState) -> AgentState:
     return state
 
 
+ABSTENTION_MESSAGE = (
+    "I don't have a sufficiently relevant policy passage to answer that with confidence. "
+    "Please have this reviewed manually or rephrase the question."
+)
+
+
 def synthesize(state: AgentState) -> AgentState:
     if state["answer"] is not None:
         return state  # model already produced a final answer with no tools needed
 
     if state["abstain"]:
-        state["answer"] = (
-            "I don't have a sufficiently relevant policy passage to answer that with confidence. "
-            "Please have this reviewed manually or rephrase the question."
-        )
+        state["answer"] = ABSTENTION_MESSAGE
         return state
 
     response = call_model(state["messages"])
