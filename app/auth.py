@@ -4,6 +4,7 @@ import jwt
 from fastapi import Header, HTTPException
 from jwt import PyJWKClient
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.observability.context import user_id_var
@@ -54,14 +55,15 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
     # run_in_threadpool, which executes them in a *copied* context, so the
     # `user_id_var.set()` below would be discarded on return and every log
     # line for the request would carry `user_id: null`. An async dependency
-    # runs on the event loop in the request's own context.
-    # decode_cognito_token stays sync (the JWKS client is cached and fast
-    # after the first call) and is called directly, not awaited.
+    # runs on the event loop in the request's own context, so the `set()`
+    # below sticks. decode_cognito_token itself stays sync (it does a
+    # blocking JWKS fetch on a cache miss) and is explicitly pushed back
+    # onto a thread pool so that fetch never blocks the event loop.
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.removeprefix("Bearer ")
     try:
-        user = decode_cognito_token(token)
+        user = await run_in_threadpool(decode_cognito_token, token)
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
     user_id_var.set(user.sub)
