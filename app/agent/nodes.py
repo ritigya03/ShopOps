@@ -1,5 +1,7 @@
 import hashlib
 import json
+import logging
+import time
 import uuid
 
 from sqlalchemy import text
@@ -14,6 +16,8 @@ from app.guardrails import (
     InsufficientEvidenceError,
     assert_evidence_present,
 )
+
+logger = logging.getLogger("shopops.tools")
 
 
 def route_or_tools(state: AgentState) -> AgentState:
@@ -50,14 +54,17 @@ def execute_tools(state: AgentState) -> AgentState:
     for call in state["pending_tool_calls"]:
         name, args = call["name"], call["args"]
         fn, permission = TOOL_DISPATCH[name]
+        start = time.monotonic()
 
         if permission not in PERMISSIONS.get(user.role, set()):
-            log_audit(user, name, "denied")
+            outcome = "denied"
+            log_audit(user, name, outcome)
             tool_results.append({"tool_name": name, "args": args, "result": None, "error": "permission_denied"})
             content = f"Permission denied: role '{user.role}' cannot use tool '{name}'."
         else:
             result = fn(**args)
-            log_audit(user, name, "success" if result is not None else "not_found")
+            outcome = "success" if result is not None else "not_found"
+            log_audit(user, name, outcome)
             if result is None:
                 tool_results.append({"tool_name": name, "args": args, "result": None, "error": "not_found"})
                 content = f"No data found for {name}({args})."
@@ -72,6 +79,11 @@ def execute_tools(state: AgentState) -> AgentState:
                 tool_results.append({"tool_name": name, "args": args, "result": dumped, "error": None})
                 content = json.dumps(dumped)
 
+        duration_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "tool_call",
+            extra={"tool_name": name, "outcome": outcome, "duration_ms": duration_ms, "permission": permission},
+        )
         tool_messages.append({"role": "tool", "tool_call_id": call["id"], "name": name, "content": content})
 
     state["tool_results"] = tool_results
