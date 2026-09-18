@@ -87,6 +87,23 @@ On the EC2 box:
 sudo apt-get update && sudo apt-get install -y git
 curl -fsSL https://get.docker.com | sudo sh   # installs Docker Engine + the `docker compose` v2 plugin together; Ubuntu's own apt repos don't reliably ship the compose plugin
 sudo usermod -aG docker ubuntu   # log out/in again for this to take effect
+
+# A fresh instance created via 03_create_ec2.sh already has this from its
+# user-data (cloud-init runs it once on first boot). Only run this by hand
+# if you're on a box created before that script added the swapfile step —
+# check first with `swapon --show`; skip if it already lists /swapfile.
+#
+# t3.micro has only 1GB RAM, shared across app + qdrant + nginx. Qdrant's
+# FastEmbed integration loads an ONNX embedding model into memory on first
+# use (search_policy and the ingestion script both trigger this via
+# models.Document(...) in app/tools.py and scripts/ingest_policy_to_qdrant.py)
+# — without swap, that can trip the OOM killer under memory pressure.
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
 sudo mkdir -p /opt/shopops && sudo chown ubuntu:ubuntu /opt/shopops
 cd /opt/shopops
 git clone <this-repo-url> .
