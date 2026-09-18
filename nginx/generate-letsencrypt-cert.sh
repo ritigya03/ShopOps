@@ -28,8 +28,13 @@ docker run --rm \
   -d "$DOMAIN" \
   --non-interactive --agree-tos -m "$EMAIL"
 
-cp "$CERT_DIR/letsencrypt/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem"
-cp "$CERT_DIR/letsencrypt/live/$DOMAIN/privkey.pem" "$CERT_DIR/privkey.pem"
+# certbot's container writes these as root (privkey.pem is 0600, root-owned)
+# since it runs as root inside its own container — sudo is required to read
+# them back out on the host, and to restore normal ownership afterward so
+# later re-runs of this script (as a non-root user) don't need sudo again.
+sudo cp "$CERT_DIR/letsencrypt/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem"
+sudo cp "$CERT_DIR/letsencrypt/live/$DOMAIN/privkey.pem" "$CERT_DIR/privkey.pem"
+sudo chown "$(id -u):$(id -g)" "$CERT_DIR/fullchain.pem" "$CERT_DIR/privkey.pem"
 
 echo "Certificate for $DOMAIN written to $CERT_DIR (fullchain.pem, privkey.pem)."
 echo "Bring the stack back up: docker compose -f docker-compose.prod.yml up -d"
