@@ -5,3 +5,4 @@ __pycache__/
 venv/
 pgdata/
 .DS_Store
+data/eval/results/
