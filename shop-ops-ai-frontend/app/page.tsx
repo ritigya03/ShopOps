@@ -5,8 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Activity, ArrowUpRight, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileText, Filter, LayoutDashboard, Menu, MessageSquare, MoreHorizontal, PackageSearch, PanelLeft, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Store, X } from 'lucide-react'
 import { activity, auditEntries, navItems, orders, roles, sellers, timeline, volume } from '@/lib/mock-data'
-
-type Role = 'support_agent' | 'ops_manager' | 'admin'
+import { AuthError, getSession, login, logout, type Role, type Session } from '@/lib/auth'
 
 const iconMap: Record<string, any> = { LayoutDashboard, Sparkles, PackageSearch, Store, ClipboardCheck, ScrollText: FileText }
 
@@ -14,9 +13,9 @@ function Logo() { return <div className="flex items-center gap-2.5"><div classNa
 
 function StatusBadge({ status }: { status: string }) { const tone = status === 'Delivered' || status === 'Approved' ? 'mint' : status === 'Shipped' || status === 'Pending' ? 'yellow' : status === 'Cancelled' || status === 'Rejected' ? 'coral' : 'peach'; return <span className={`status-badge ${tone}`}><span className="status-dot" />{status}</span> }
 
-function Sidebar({ path, role, setRole, collapsed, setCollapsed }: { path: string; role: Role; setRole: (r: Role) => void; collapsed: boolean; setCollapsed: (v: boolean) => void }) {
-  const [roleOpen, setRoleOpen] = useState(false)
-  return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}><div className="sidebar-top"><Logo /><button className="icon-btn sidebar-toggle" onClick={() => setCollapsed(!collapsed)} aria-label="Toggle sidebar"><PanelLeft size={16} /></button></div><div className="workspace-pill"><div className="workspace-avatar">S</div><div className="min-w-0"><div className="text-xs font-semibold truncate">ShopOps workspace</div><div className="text-[10px] text-muted">Production demo</div></div><ChevronDown size={14} className="ml-auto text-muted" /></div><nav className="nav-list">{navItems.filter((item) => item.roles.includes(role)).map((item) => { const Icon = iconMap[item.icon]; const active = path === item.href || (path === '/dashboard' && item.href === '/dashboard'); return <a key={item.href} href={item.href} className={`nav-item ${active ? 'active' : ''}`}><Icon size={17} strokeWidth={active ? 2.2 : 1.8} /><span>{item.label}</span>{item.label === 'Approvals' && <span className="nav-count">3</span>}</a> })}</nav><div className="sidebar-bottom"><a className="nav-item"><CircleHelp size={17} /><span>Help center</span></a><a className="nav-item"><Settings2 size={17} /><span>Settings</span></a><div className="role-switcher"><button className="role-button" onClick={() => setRoleOpen(!roleOpen)}><div className="avatar">AM</div><div className="min-w-0 text-left"><div className="text-xs font-semibold truncate">Alex Morgan</div><div className="text-[10px] text-muted truncate">{roles.find((r) => r.key === role)?.label}</div></div><ChevronDown size={14} className="ml-auto text-muted" /></button>{roleOpen && <div className="role-menu">{roles.map((r) => <button key={r.key} onClick={() => { setRole(r.key); setRoleOpen(false) }} className={r.key === role ? 'selected' : ''}>{r.label}{r.key === role && <Check size={13} />}</button>)}</div>}</div></div></aside>
+function Sidebar({ path, role, email, onLogout, collapsed, setCollapsed }: { path: string; role: Role; email: string; onLogout: () => void; collapsed: boolean; setCollapsed: (v: boolean) => void }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}><div className="sidebar-top"><Logo /><button className="icon-btn sidebar-toggle" onClick={() => setCollapsed(!collapsed)} aria-label="Toggle sidebar"><PanelLeft size={16} /></button></div><div className="workspace-pill"><div className="workspace-avatar">S</div><div className="min-w-0"><div className="text-xs font-semibold truncate">ShopOps workspace</div><div className="text-[10px] text-muted">Production demo</div></div><ChevronDown size={14} className="ml-auto text-muted" /></div><nav className="nav-list">{navItems.filter((item) => item.roles.includes(role)).map((item) => { const Icon = iconMap[item.icon]; const active = path === item.href || (path === '/dashboard' && item.href === '/dashboard'); return <a key={item.href} href={item.href} className={`nav-item ${active ? 'active' : ''}`}><Icon size={17} strokeWidth={active ? 2.2 : 1.8} /><span>{item.label}</span>{item.label === 'Approvals' && <span className="nav-count">3</span>}</a> })}</nav><div className="sidebar-bottom"><a className="nav-item"><CircleHelp size={17} /><span>Help center</span></a><a className="nav-item"><Settings2 size={17} /><span>Settings</span></a><div className="role-switcher"><button className="role-button" onClick={() => setMenuOpen(!menuOpen)}><div className="avatar">{email.slice(0, 2).toUpperCase()}</div><div className="min-w-0 text-left"><div className="text-xs font-semibold truncate">{email}</div><div className="text-[10px] text-muted truncate">{roles.find((r) => r.key === role)?.label}</div></div><ChevronDown size={14} className="ml-auto text-muted" /></button>{menuOpen && <div className="role-menu"><button onClick={onLogout}>Sign out</button></div>}</div></div></aside>
 }
 
 function TopHeader({ title, subtitle, onMenu }: { title: string; subtitle?: string; onMenu: () => void }) { return <header className="top-header"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu size={19} /></button><div><div className="breadcrumbs"><span>Workspace</span><ChevronRight size={12} /><span className="font-medium text-ink">{title}</span></div>{subtitle && <p className="header-subtitle">{subtitle}</p>}</div><div className="header-actions"><button className="search-btn"><Search size={16} /><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-btn relative"><Bell size={17} /><i className="notification-dot" /></button><div className="avatar">AM</div></div></header> }
@@ -45,6 +44,60 @@ function ApprovalsPage() { const [approved, setApproved] = useState(false); retu
 
 function AuditPage() { return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Governance & compliance</div><h1>Audit log</h1><p>An append-only record of agent actions and evidence access.</p></div><button className="outline-btn"><Filter size={14} />Filters</button></div><div className="audit-filters"><button className="filter-pill">Action type <ChevronDown size={13} /></button><button className="filter-pill">Outcome <ChevronDown size={13} /></button><button className="filter-pill">User <ChevronDown size={13} /></button><div className="ml-auto text-xs text-muted">Showing last 30 days</div></div><div className="soft-card audit-card"><div className="audit-header"><div className="section-kicker">Activity timeline</div><span className="text-xs text-muted">5 events</span></div>{auditEntries.map((entry, i) => <div className="audit-row" key={i}><div className={`audit-icon ${entry.outcome === 'Denied' ? 'denied' : ''}`}>{entry.outcome === 'Denied' ? <X size={13} /> : <Check size={13} />}</div><div className="audit-time">{entry.time}</div><div className="audit-main"><div><strong>{entry.action}</strong><span className="audit-arrow">→</span><code>{entry.tool}</code></div><div className="text-xs text-muted mt-1">{entry.user} · {entry.role}</div></div><span className={`outcome ${entry.outcome === 'Denied' ? 'denied-text' : ''}`}>{entry.outcome}</span></div>)}</div></div> }
 
-function Login({ onLogin }: { onLogin: () => void }) { return <main className="login-page"><div className="login-grid" /><div className="login-card"><Logo /><div className="login-copy"><div className="section-kicker">Operations, with evidence.</div><h1>Welcome back</h1><p>Sign in to your operations workspace.</p></div><label>Email<input defaultValue="alex@shopops.ai" type="email" /></label><label>Password<input defaultValue="••••••••••••" type="password" /></label><button className="primary-btn w-full justify-center" onClick={onLogin}>Sign in <ArrowUpRight size={15} /></button><div className="login-foot"><ShieldCheck size={14} /> Secure workspace · Demo mode</div></div></main> }
+function Login({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
-export default function Page() { const [path, setPath] = useState('/dashboard'); const [role, setRole] = useState<Role>('ops_manager'); const [collapsed, setCollapsed] = useState(false); const [mobileOpen, setMobileOpen] = useState(false); useEffect(() => { setPath(window.location.pathname === '/' ? '/dashboard' : window.location.pathname) }, []); const navigate = (href: string) => { window.history.pushState({}, '', href); setPath(href); setMobileOpen(false) }; if (path === '/login') return <Login onLogin={() => navigate('/dashboard')} />; const page = path === '/dashboard/chat' ? <ChatPage /> : path === '/dashboard/orders' ? <OrdersPage /> : path === '/dashboard/sellers' ? <SellersPage /> : path === '/dashboard/approvals' ? <ApprovalsPage /> : path === '/dashboard/audit' ? <AuditPage /> : <Dashboard />; const title = path === '/dashboard/chat' ? 'AI Chat' : path.split('/').pop()?.replace('-', ' ') || 'Dashboard'; return <div className="app-shell"><div className={`sidebar-mobile-overlay ${mobileOpen ? 'open' : ''}`} onClick={() => setMobileOpen(false)} /><div className={`sidebar-wrap ${mobileOpen ? 'mobile-open' : ''}`}><Sidebar path={path} role={role} setRole={setRole} collapsed={collapsed} setCollapsed={setCollapsed} /></div><div className="main-shell"><TopHeader title={title} onMenu={() => setMobileOpen(!mobileOpen)} /><main>{page}</main></div></div> }
+  const handleSubmit = async () => {
+    setError(null)
+    setLoading(true)
+    try {
+      await login(email, password)
+      onLogin()
+    } catch (err) {
+      setError(err instanceof AuthError ? err.message : 'Something went wrong. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return <main className="login-page"><div className="login-grid" /><div className="login-card"><Logo /><div className="login-copy"><div className="section-kicker">Operations, with evidence.</div><h1>Welcome back</h1><p>Sign in to your operations workspace.</p></div><label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" /></label><label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} /></label>{error && <p className="text-xs coral-text">{error}</p>}<button className="primary-btn w-full justify-center" onClick={handleSubmit} disabled={loading}>{loading ? 'Signing in…' : <>Sign in <ArrowUpRight size={15} /></>}</button><div className="login-foot"><ShieldCheck size={14} /> Secure workspace</div></div></main>
+}
+
+export default function Page() {
+  const [path, setPath] = useState('/login')
+  const [session, setSession] = useState<Session | null>(null)
+  const [checked, setChecked] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  useEffect(() => {
+    const existing = getSession()
+    setSession(existing)
+    const requestedPath = window.location.pathname === '/' ? '/dashboard' : window.location.pathname
+    setPath(existing ? requestedPath : '/login')
+    setChecked(true)
+  }, [])
+
+  const navigate = (href: string) => { window.history.pushState({}, '', href); setPath(href); setMobileOpen(false) }
+
+  const handleLogin = () => {
+    setSession(getSession())
+    navigate('/dashboard')
+  }
+
+  const handleLogout = () => {
+    logout()
+    setSession(null)
+    navigate('/login')
+  }
+
+  if (!checked) return null
+  if (!session || path === '/login') return <Login onLogin={handleLogin} />
+
+  const page = path === '/dashboard/chat' ? <ChatPage /> : path === '/dashboard/orders' ? <OrdersPage /> : path === '/dashboard/sellers' ? <SellersPage /> : path === '/dashboard/approvals' ? <ApprovalsPage /> : path === '/dashboard/audit' ? <AuditPage /> : <Dashboard />
+  const title = path === '/dashboard/chat' ? 'AI Chat' : path.split('/').pop()?.replace('-', ' ') || 'Dashboard'
+  return <div className="app-shell"><div className={`sidebar-mobile-overlay ${mobileOpen ? 'open' : ''}`} onClick={() => setMobileOpen(false)} /><div className={`sidebar-wrap ${mobileOpen ? 'mobile-open' : ''}`}><Sidebar path={path} role={session.role} email={session.email} onLogout={handleLogout} collapsed={collapsed} setCollapsed={setCollapsed} /></div><div className="main-shell"><TopHeader title={title} onMenu={() => setMobileOpen(!mobileOpen)} /><main>{page}</main></div></div>
+}

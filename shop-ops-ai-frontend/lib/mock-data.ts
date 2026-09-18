@@ -1,3 +1,5 @@
+import type { Role } from './auth'
+
 export const orders = [
   { id: 'e48151c', status: 'Shipped', purchase: '18 Jun 2025', eta: '24 Jun 2025', delivered: '—', seller: 'SP-1048', value: 'R$ 375', state: 'Delayed' },
   { id: '8f2a9d1', status: 'Delivered', purchase: '17 Jun 2025', eta: '22 Jun 2025', delivered: '21 Jun 2025', seller: 'RJ-2081', value: 'R$ 189', state: 'On time' },
@@ -41,17 +43,16 @@ export const timeline = [
 ]
 
 export const navItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard', roles: ['support_agent', 'ops_manager', 'admin'] },
-  { label: 'AI Chat', href: '/dashboard/chat', icon: 'Sparkles', roles: ['support_agent', 'ops_manager', 'admin'] },
-  { label: 'Orders', href: '/dashboard/orders', icon: 'PackageSearch', roles: ['support_agent', 'ops_manager', 'admin'] },
-  { label: 'Sellers', href: '/dashboard/sellers', icon: 'Store', roles: ['ops_manager', 'admin'] },
-  { label: 'Approvals', href: '/dashboard/approvals', icon: 'ClipboardCheck', roles: ['ops_manager', 'admin'] },
-  { label: 'Audit Log', href: '/dashboard/audit', icon: 'ScrollText', roles: ['admin'] },
+  { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard', roles: ['Viewer', 'SupportAgent', 'OperationsManager'] },
+  { label: 'AI Chat', href: '/dashboard/chat', icon: 'Sparkles', roles: ['Viewer', 'SupportAgent', 'OperationsManager'] },
+  { label: 'Orders', href: '/dashboard/orders', icon: 'PackageSearch', roles: ['Viewer', 'SupportAgent', 'OperationsManager'] },
+  { label: 'Sellers', href: '/dashboard/sellers', icon: 'Store', roles: ['OperationsManager'] },
+  { label: 'Approvals', href: '/dashboard/approvals', icon: 'ClipboardCheck', roles: ['OperationsManager'] },
+  { label: 'Audit Log', href: '/dashboard/audit', icon: 'ScrollText', roles: ['OperationsManager'] },
 ]
 
-type Role = 'support_agent' | 'ops_manager' | 'admin'
 export const roles: { key: Role; label: string }[] = [
-  { key: 'support_agent', label: 'Support agent' },
-  { key: 'ops_manager', label: 'Ops manager' },
-  { key: 'admin', label: 'Admin' },
+  { key: 'Viewer', label: 'Viewer' },
+  { key: 'SupportAgent', label: 'Support agent' },
+  { key: 'OperationsManager', label: 'Ops manager' },
 ]
