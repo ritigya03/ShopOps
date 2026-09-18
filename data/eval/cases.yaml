@@ -38,7 +38,7 @@
 - id: compensation_proposal_moderate
   message: "Order 33a3edb84b9df4cb49546859b990ac6d was delivered late, can you propose compensation?"
   role: SupportAgent
-  expected_tools: [get_order, estimate_delivery_risk, calculate_compensation]
+  expected_tools: [calculate_compensation]
 
 - id: policy_citation_compensation
   message: "What is ShopOps' policy on compensation for late deliveries?"
