@@ -14,6 +14,7 @@ def call_model(messages: list[dict], tools: list[dict] | None = None):
         "model": settings.agent_model,
         "messages": messages,
         "api_key": settings.gemini_api_key,
+        "num_retries": 3,
     }
     if tools:
         kwargs["tools"] = tools
@@ -66,6 +67,7 @@ def stream_model(messages: list[dict]) -> Iterator[str]:
             messages=messages,
             api_key=settings.gemini_api_key,
             stream=True,
+            num_retries=3,
         )
         for chunk in response:
             delta = chunk.choices[0].delta.content

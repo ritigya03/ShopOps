@@ -38,6 +38,27 @@ def test_call_model_omits_tools_when_not_provided():
     assert "tool_choice" not in kwargs
 
 
+def test_call_model_configures_retries_for_transient_provider_errors():
+    # Gemini periodically returns 503 ServiceUnavailableError ("high
+    # demand") — litellm's num_retries handles retry-with-backoff for
+    # exactly this class of error internally.
+    with patch("app.agent.llm.litellm.completion", return_value=Mock()) as mock_completion:
+        call_model([{"role": "user", "content": "hi"}])
+
+    _, kwargs = mock_completion.call_args
+    assert kwargs["num_retries"] == 3
+
+
+def test_stream_model_configures_retries_for_transient_provider_errors():
+    with patch(
+        "app.agent.llm.litellm.completion", return_value=[FakeChunk("hi"), FakeChunk(None)]
+    ) as mock_completion:
+        list(stream_model([{"role": "user", "content": "hi"}]))
+
+    _, kwargs = mock_completion.call_args
+    assert kwargs["num_retries"] == 3
+
+
 def test_call_model_logs_llm_call(caplog):
     fake_response = Mock()
     fake_response.usage = Mock(prompt_tokens=10, completion_tokens=5)
