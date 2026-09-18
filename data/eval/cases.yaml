@@ -4,6 +4,12 @@
 # It is NOT a general "did the model refuse to answer" flag — a query the
 # model refuses without calling any tool (e.g. an out-of-scope question)
 # leaves `abstain` False, and is instead scored purely on expected_tools.
+#
+# Do NOT set expected_citation_doc_id and expect_abstain on the same case:
+# validate_evidence only filters `evidence` down to above-threshold passages on
+# the success path, so when abstention fires the unfiltered (weak) evidence
+# list survives and citation scoring would read a PASS off evidence that was
+# never good enough to cite.
 
 - id: order_status_lookup
   message: "What is the status of order 00010242fe8c5a6d1ba2dd792cb16214?"
