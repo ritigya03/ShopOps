@@ -62,7 +62,25 @@ def execute_tools(state: AgentState) -> AgentState:
             tool_results.append({"tool_name": name, "args": args, "result": None, "error": "permission_denied"})
             content = f"Permission denied: role '{user.role}' cannot use tool '{name}'."
         else:
-            result = fn(**args)
+            try:
+                result = fn(**args)
+            except Exception:
+                # Re-raising exits the loop, so the trailing logger.info() for
+                # this iteration never runs — no double-logging.
+                duration_ms = (time.monotonic() - start) * 1000
+                # G201 suppressed: kept as .error(..., exc_info=True) so this
+                # line is visibly the same shape as the success/denied log.
+                logger.error(  # noqa: G201
+                    "tool_call",
+                    extra={
+                        "tool_name": name,
+                        "outcome": "error",
+                        "duration_ms": duration_ms,
+                        "permission": permission,
+                    },
+                    exc_info=True,
+                )
+                raise
             outcome = "success" if result is not None else "not_found"
             log_audit(user, name, outcome)
             if result is None:
