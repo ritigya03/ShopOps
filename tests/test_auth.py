@@ -2,7 +2,7 @@ import jwt
 import pytest
 from fastapi import HTTPException
 
-from app.auth import decode_cognito_token, get_current_user
+from app.auth import CurrentUser, decode_cognito_token, get_current_user
 
 
 @pytest.mark.integration
@@ -39,3 +39,21 @@ def test_get_current_user_rejects_missing_header():
     with pytest.raises(HTTPException) as exc_info:
         get_current_user(authorization=None)
     assert exc_info.value.status_code == 401
+
+
+def test_get_current_user_sets_user_id_context(monkeypatch):
+    from app.observability.context import user_id_var
+
+    fake_user = CurrentUser(sub="user-123", email="u@example.com", role="Viewer")
+    monkeypatch.setattr("app.auth.decode_cognito_token", lambda token: fake_user)
+
+    try:
+        result = get_current_user(authorization="Bearer sometoken")
+
+        assert result is fake_user
+        assert user_id_var.get() == "user-123"
+    finally:
+        # get_current_user has no request-scoped teardown of its own (that's
+        # the HTTP middleware's job) — reset here so this contextvar mutation
+        # doesn't leak into later tests sharing this thread's context.
+        user_id_var.set(None)

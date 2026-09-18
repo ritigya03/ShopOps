@@ -6,6 +6,7 @@ from jwt import PyJWKClient
 from pydantic import BaseModel
 
 from app.config import settings
+from app.observability.context import user_id_var
 
 _ROLE_PRIORITY = ["OperationsManager", "SupportAgent", "Viewer"]
 
@@ -53,6 +54,8 @@ def get_current_user(authorization: str | None = Header(default=None)) -> Curren
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.removeprefix("Bearer ")
     try:
-        return decode_cognito_token(token)
+        user = decode_cognito_token(token)
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+    user_id_var.set(user.sub)
+    return user

@@ -1,8 +1,11 @@
 import json
 import logging
+import time
+import uuid
 from datetime import datetime, timezone
 
 import watchtower
+from fastapi import FastAPI, Request
 
 from app.config import settings
 from app.observability.context import request_id_var, user_id_var
@@ -59,3 +62,31 @@ def configure_logging() -> None:
         cloudwatch_handler.setFormatter(formatter)
         cloudwatch_handler.addFilter(context_filter)
         root.addHandler(cloudwatch_handler)
+
+
+_http_logger = logging.getLogger("shopops.http")
+
+
+def add_request_logging_middleware(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def _log_requests(request: Request, call_next):
+        request_token = request_id_var.set(str(uuid.uuid4()))
+        start = time.monotonic()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            duration_ms = (time.monotonic() - start) * 1000
+            _http_logger.info(
+                "http_request",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": status_code,
+                    "latency_ms": duration_ms,
+                },
+            )
+            request_id_var.reset(request_token)
+            user_id_var.set(None)
