@@ -8,6 +8,7 @@ import { activity, auditEntries, navItems, orders, roles, sellers, timeline, vol
 import { AuthError, getSession, login, logout, type Role, type Session } from '@/lib/auth'
 import { streamChat, type ChatDone } from '@/lib/chat'
 import type { CompensationProposal, PolicyEvidence } from '@/lib/types'
+import { approveAction, listActions, rejectAction, type ActionSummary } from '@/lib/actions'
 
 const iconMap: Record<string, any> = { LayoutDashboard, Sparkles, PackageSearch, Store, ClipboardCheck, ScrollText: FileText }
 
@@ -17,7 +18,7 @@ function StatusBadge({ status }: { status: string }) { const tone = status === '
 
 function Sidebar({ path, role, email, onLogout, collapsed, setCollapsed }: { path: string; role: Role; email: string; onLogout: () => void; collapsed: boolean; setCollapsed: (v: boolean) => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}><div className="sidebar-top"><Logo /><button className="icon-btn sidebar-toggle" onClick={() => setCollapsed(!collapsed)} aria-label="Toggle sidebar"><PanelLeft size={16} /></button></div><div className="workspace-pill"><div className="workspace-avatar">S</div><div className="min-w-0"><div className="text-xs font-semibold truncate">ShopOps workspace</div><div className="text-[10px] text-muted">Production demo</div></div><ChevronDown size={14} className="ml-auto text-muted" /></div><nav className="nav-list">{navItems.filter((item) => item.roles.includes(role)).map((item) => { const Icon = iconMap[item.icon]; const active = path === item.href || (path === '/dashboard' && item.href === '/dashboard'); return <a key={item.href} href={item.href} className={`nav-item ${active ? 'active' : ''}`}><Icon size={17} strokeWidth={active ? 2.2 : 1.8} /><span>{item.label}</span>{item.label === 'Approvals' && <span className="nav-count">3</span>}</a> })}</nav><div className="sidebar-bottom"><a className="nav-item"><CircleHelp size={17} /><span>Help center</span></a><a className="nav-item"><Settings2 size={17} /><span>Settings</span></a><div className="role-switcher"><button className="role-button" onClick={() => setMenuOpen(!menuOpen)}><div className="avatar">{email.slice(0, 2).toUpperCase()}</div><div className="min-w-0 text-left"><div className="text-xs font-semibold truncate">{email}</div><div className="text-[10px] text-muted truncate">{roles.find((r) => r.key === role)?.label}</div></div><ChevronDown size={14} className="ml-auto text-muted" /></button>{menuOpen && <div className="role-menu"><button onClick={onLogout}>Sign out</button></div>}</div></div></aside>
+  return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}><div className="sidebar-top"><Logo /><button className="icon-btn sidebar-toggle" onClick={() => setCollapsed(!collapsed)} aria-label="Toggle sidebar"><PanelLeft size={16} /></button></div><div className="workspace-pill"><div className="workspace-avatar">S</div><div className="min-w-0"><div className="text-xs font-semibold truncate">ShopOps workspace</div><div className="text-[10px] text-muted">Production demo</div></div><ChevronDown size={14} className="ml-auto text-muted" /></div><nav className="nav-list">{navItems.filter((item) => item.roles.includes(role)).map((item) => { const Icon = iconMap[item.icon]; const active = path === item.href || (path === '/dashboard' && item.href === '/dashboard'); return <a key={item.href} href={item.href} className={`nav-item ${active ? 'active' : ''}`}><Icon size={17} strokeWidth={active ? 2.2 : 1.8} /><span>{item.label}</span></a> })}</nav><div className="sidebar-bottom"><a className="nav-item"><CircleHelp size={17} /><span>Help center</span></a><a className="nav-item"><Settings2 size={17} /><span>Settings</span></a><div className="role-switcher"><button className="role-button" onClick={() => setMenuOpen(!menuOpen)}><div className="avatar">{email.slice(0, 2).toUpperCase()}</div><div className="min-w-0 text-left"><div className="text-xs font-semibold truncate">{email}</div><div className="text-[10px] text-muted truncate">{roles.find((r) => r.key === role)?.label}</div></div><ChevronDown size={14} className="ml-auto text-muted" /></button>{menuOpen && <div className="role-menu"><button onClick={onLogout}>Sign out</button></div>}</div></div></aside>
 }
 
 function TopHeader({ title, subtitle, onMenu }: { title: string; subtitle?: string; onMenu: () => void }) { return <header className="top-header"><button className="mobile-menu icon-btn" onClick={onMenu}><Menu size={19} /></button><div><div className="breadcrumbs"><span>Workspace</span><ChevronRight size={12} /><span className="font-medium text-ink">{title}</span></div>{subtitle && <p className="header-subtitle">{subtitle}</p>}</div><div className="header-actions"><button className="search-btn"><Search size={16} /><span>Search anything</span><kbd>⌘ K</kbd></button><button className="icon-btn relative"><Bell size={17} /><i className="notification-dot" /></button><div className="avatar">AM</div></div></header> }
@@ -141,7 +142,89 @@ function OrdersPage() { const [selected, setSelected] = useState<any>(null); con
 
 function SellersPage() { return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Manager workspace</div><h1>Seller performance</h1><p>Aggregate performance signals across your marketplace.</p></div><button className="outline-btn"><Filter size={14} />Filters</button></div><div className="stat-grid seller-stats"><StatCard label="Total sellers" value="284" delta="12 new this month" icon={<Store size={17} />} tone="mint" /><StatCard label="Avg late delivery" value="12.8%" delta="1.4% improvement" icon={<Clock3 size={17} />} tone="yellow" /><StatCard label="Avg review score" value="4.6 / 5" delta="0.2 vs last month" icon={<Activity size={17} />} tone="peach" /></div><div className="soft-card table-card"><div className="card-heading"><div><div className="section-kicker">Marketplace health</div><h2>Seller directory</h2></div><div className="text-xs text-muted">Updated 12 min ago</div></div><div className="table-wrap"><table><thead><tr><th>Seller ID</th><th>City</th><th>State</th><th>Total orders</th><th>Late delivery</th><th>Review score</th><th /></tr></thead><tbody>{sellers.map((seller) => <tr key={seller.id}><td className="font-semibold">{seller.id}</td><td>{seller.city}</td><td>{seller.state}</td><td>{seller.orders}</td><td><span className={`rate ${seller.late > 20 ? 'high' : seller.late >= 10 ? 'medium' : 'low'}`}>{seller.late}%</span></td><td><span className="score">{seller.score}</span></td><td><a href="/dashboard/chat" className="ask-link">Ask AI <ArrowUpRight size={13} /></a></td></tr>)}</tbody></table></div></div></div> }
 
-function ApprovalsPage() { const [approved, setApproved] = useState(false); return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Human in the loop</div><h1>Approval queue</h1><p>Review proposed customer compensation before any action is taken.</p></div><div className="queue-count"><span>3</span> pending review</div></div><div className="tabs"><button className="active">Pending <span>3</span></button><button>Approved</button><button>Rejected</button><button>Expired</button></div><div className="approval-list"><div className={`approval-card ${!approved ? 'expiring' : ''}`}><div className="approval-top"><div><div className="section-kicker">Compensation proposal</div><h3>e48151c <span>· submitted by Alex Morgan</span></h3></div><StatusBadge status={approved ? 'Approved' : 'Pending'} /></div><div className="approval-details"><div><span>Amount</span><strong>R$ 75</strong></div><div><span>Policy reference</span><strong>Refund Policy v2.1 §4.1</strong></div><div><span>Evidence</span><strong>3 sources</strong></div><div><span>Expires</span><strong className={!approved ? 'coral-text' : ''}>{approved ? '—' : '14:32'}</strong></div></div><div className="approval-reason">Delivery delay beyond policy threshold. Customer has no previous compensation claims.</div><div className="approval-actions"><button className="outline-btn"><FileText size={14} />View evidence</button>{!approved && <><button className="primary-btn" onClick={() => setApproved(true)}><Check size={14} />Approve proposal</button><button className="text-btn">Reject</button></>}</div></div><div className="approval-card"><div className="approval-top"><div><div className="section-kicker">Compensation proposal</div><h3>8f2a9d1 <span>· submitted by Jordan Lee</span></h3></div><StatusBadge status="Pending" /></div><div className="approval-details"><div><span>Amount</span><strong>R$ 120</strong></div><div><span>Policy reference</span><strong>Refund Policy v2.1 §4.1</strong></div><div><span>Evidence</span><strong>4 sources</strong></div><div><span>Expires</span><strong>2h 08m</strong></div></div><div className="approval-actions"><button className="outline-btn"><FileText size={14} />View evidence</button><button className="primary-btn">Review proposal <ArrowUpRight size={14} /></button></div></div></div></div> }
+type ApprovalTab = 'pending' | 'approved' | 'rejected' | 'expired'
+
+function ApprovalsPage() {
+  const [tab, setTab] = useState<ApprovalTab>('pending')
+  const [proposed, setProposed] = useState<ActionSummary[]>([])
+  const [succeeded, setSucceeded] = useState<ActionSummary[]>([])
+  const [rejected, setRejected] = useState<ActionSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [actingOn, setActingOn] = useState<string | null>(null)
+
+  const loadAll = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [p, s, r] = await Promise.all([listActions('PROPOSED'), listActions('SUCCEEDED'), listActions('REJECTED')])
+      setProposed(p)
+      setSucceeded(s)
+      setRejected(r)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load approvals.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadAll() }, [])
+
+  const pending = proposed.filter((a) => !a.is_expired)
+  const expired = proposed.filter((a) => a.is_expired)
+  const byTab: Record<ApprovalTab, ActionSummary[]> = { pending, approved: succeeded, rejected, expired }
+
+  const act = async (actionId: string, fn: (id: string) => Promise<void>, failMessage: string) => {
+    setActingOn(actionId)
+    setError(null)
+    try {
+      await fn(actionId)
+      await loadAll()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : failMessage)
+    } finally {
+      setActingOn(null)
+    }
+  }
+
+  const list = byTab[tab]
+
+  return <div className="page-content">
+    <div className="page-intro compact">
+      <div><div className="section-kicker">Human in the loop</div><h1>Approval queue</h1><p>Review proposed customer compensation before any action is taken.</p></div>
+      <div className="queue-count"><span>{pending.length}</span> pending review</div>
+    </div>
+    <div className="tabs">
+      <button className={tab === 'pending' ? 'active' : ''} onClick={() => setTab('pending')}>Pending <span>{pending.length}</span></button>
+      <button className={tab === 'approved' ? 'active' : ''} onClick={() => setTab('approved')}>Approved</button>
+      <button className={tab === 'rejected' ? 'active' : ''} onClick={() => setTab('rejected')}>Rejected</button>
+      <button className={tab === 'expired' ? 'active' : ''} onClick={() => setTab('expired')}>Expired</button>
+    </div>
+    {error && <p className="text-xs coral-text mt-2">{error}</p>}
+    {loading
+      ? <p className="text-sm text-muted mt-4">Loading…</p>
+      : <div className="approval-list">
+          {list.length === 0 && <p className="text-sm text-muted mt-4">Nothing here.</p>}
+          {list.map((a) => <div className={`approval-card ${tab === 'pending' ? 'expiring' : ''}`} key={a.action_id}>
+            <div className="approval-top">
+              <div><div className="section-kicker">Compensation proposal</div><h3>{a.order_id} <span>· submitted by {a.requested_by}</span></h3></div>
+              <StatusBadge status={a.status === 'SUCCEEDED' ? 'Approved' : a.status === 'REJECTED' ? 'Rejected' : a.is_expired ? 'Cancelled' : 'Pending'} />
+            </div>
+            <div className="approval-details">
+              <div><span>Amount</span><strong>{a.proposed_amount ? `R$ ${Number(a.proposed_amount).toFixed(2)}` : '—'}</strong></div>
+              <div><span>Policy</span><strong>v{a.policy_version}</strong></div>
+              <div><span>Severity</span><strong>{a.severity ?? '—'}</strong></div>
+              <div><span>Expires</span><strong className={tab === 'pending' ? 'coral-text' : ''}>{a.status === 'PROPOSED' && a.expires_at ? new Date(a.expires_at).toLocaleString() : '—'}</strong></div>
+            </div>
+            {a.reason && <div className="approval-reason">{a.reason}</div>}
+            {tab === 'pending' && <div className="approval-actions">
+              <button className="primary-btn" onClick={() => act(a.action_id, approveAction, 'Approve failed.')} disabled={actingOn === a.action_id}><Check size={14} />Approve proposal</button>
+              <button className="text-btn" onClick={() => act(a.action_id, rejectAction, 'Reject failed.')} disabled={actingOn === a.action_id}>Reject</button>
+            </div>}
+          </div>)}
+        </div>}
+  </div>
+}
 
 function AuditPage() { return <div className="page-content"><div className="page-intro compact"><div><div className="section-kicker">Governance & compliance</div><h1>Audit log</h1><p>An append-only record of agent actions and evidence access.</p></div><button className="outline-btn"><Filter size={14} />Filters</button></div><div className="audit-filters"><button className="filter-pill">Action type <ChevronDown size={13} /></button><button className="filter-pill">Outcome <ChevronDown size={13} /></button><button className="filter-pill">User <ChevronDown size={13} /></button><div className="ml-auto text-xs text-muted">Showing last 30 days</div></div><div className="soft-card audit-card"><div className="audit-header"><div className="section-kicker">Activity timeline</div><span className="text-xs text-muted">5 events</span></div>{auditEntries.map((entry, i) => <div className="audit-row" key={i}><div className={`audit-icon ${entry.outcome === 'Denied' ? 'denied' : ''}`}>{entry.outcome === 'Denied' ? <X size={13} /> : <Check size={13} />}</div><div className="audit-time">{entry.time}</div><div className="audit-main"><div><strong>{entry.action}</strong><span className="audit-arrow">→</span><code>{entry.tool}</code></div><div className="text-xs text-muted mt-1">{entry.user} · {entry.role}</div></div><span className={`outcome ${entry.outcome === 'Denied' ? 'denied-text' : ''}`}>{entry.outcome}</span></div>)}</div></div> }
 
