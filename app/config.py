@@ -14,6 +14,7 @@ class Settings:
     cognito_app_client_id: str = os.environ["COGNITO_APP_CLIENT_ID"]
     gemini_api_key: str = os.environ["GEMINI_API_KEY"]
     agent_model: str = os.environ.get("AGENT_MODEL", "gemini/gemini-3.1-flash-lite")
+    cors_origins: list[str] = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 
 settings = Settings()

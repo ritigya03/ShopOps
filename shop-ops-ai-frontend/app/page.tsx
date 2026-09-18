@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Activity, ArrowUpRight, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileText, Filter, LayoutDashboard, Menu, MessageSquare, MoreHorizontal, PackageSearch, PanelLeft, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Store, X } from 'lucide-react'
+import { Activity, ArrowUpRight, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileText, Filter, LayoutDashboard, Menu, MoreHorizontal, PackageSearch, PanelLeft, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Store, X } from 'lucide-react'
 import { activity, auditEntries, navItems, orders, roles, sellers, timeline, volume } from '@/lib/mock-data'
 import { AuthError, getSession, login, logout, type Role, type Session } from '@/lib/auth'
+import { streamChat, type ChatDone } from '@/lib/chat'
+import type { CompensationProposal, PolicyEvidence } from '@/lib/types'
 
 const iconMap: Record<string, any> = { LayoutDashboard, Sparkles, PackageSearch, Store, ClipboardCheck, ScrollText: FileText }
 
@@ -24,15 +26,114 @@ function StatCard({ label, value, delta, icon, tone }: { label: string; value: s
 
 function Timeline() { return <div className="timeline">{timeline.map((step, i) => <div className="timeline-step" key={step.label}><div className={`timeline-node ${step.state}`}>{step.state === 'complete' ? <Check size={12} /> : step.state === 'current' ? <span /> : null}</div>{i < timeline.length - 1 && <div className={`timeline-line ${step.state === 'pending' ? 'pending' : ''}`} />}<div className="timeline-copy"><div className="text-xs font-semibold">{step.label}</div><div className="text-[10px] text-muted mt-1">{step.date}</div></div></div>)}</div> }
 
-function RiskCard() { return <div className="soft-card p-4"><div className="flex items-center justify-between mb-3"><div><div className="section-kicker">Delivery intelligence</div><div className="font-semibold text-sm mt-1">Risk assessment</div></div><span className="signal-pill"><span />Confirmed data</span></div><div className="risk-row"><span>Delay probability</span><strong>68%</strong><div className="progress"><i className="coral-fill" style={{ width: '68%' }} /></div></div><div className="risk-row"><span>Route risk</span><strong>Medium</strong><div className="progress"><i className="yellow-fill" style={{ width: '51%' }} /></div></div><div className="unavailable"><Activity size={14} /> Shipping signal unavailable <span>Showing confirmed data only.</span></div></div> }
+function Citation({ citation }: { citation: PolicyEvidence }) {
+  const [open, setOpen] = useState(false)
+  return <div className="citation-wrap">
+    <button className="citation" onClick={() => setOpen(!open)}><FileText size={13} />{citation.doc_id} <span>· {citation.section}</span></button>
+    {open && <div className="citation-popover">
+      <div className="flex justify-between"><span className="text-[10px] uppercase tracking-wider text-muted font-semibold">Policy evidence</span><button onClick={() => setOpen(false)}><X size={14} /></button></div>
+      <div className="font-semibold text-sm mt-2">{citation.doc_id} <span className="text-muted font-normal">v{citation.version}</span></div>
+      <div className="text-xs text-muted mt-1">{citation.section}</div>
+      <p className="excerpt">&ldquo;{citation.excerpt}&rdquo;</p>
+    </div>}
+  </div>
+}
 
-function Citation() { const [open, setOpen] = useState(false); return <div className="citation-wrap"><button className="citation" onClick={() => setOpen(!open)}><FileText size={13} />Refund Policy v2.1 <span>· §4.1</span></button>{open && <div className="citation-popover"><div className="flex justify-between"><span className="text-[10px] uppercase tracking-wider text-muted font-semibold">Policy evidence</span><button onClick={() => setOpen(false)}><X size={14} /></button></div><div className="font-semibold text-sm mt-2">Refund Policy v2.1</div><div className="text-xs text-muted mt-1">Section 4.1 · Delivery exceptions</div><p className="excerpt">“Customers may receive compensation when delivery exceeds the promised window by more than 24 hours.”</p></div>}</div> }
+function Proposal({ proposal }: { proposal: CompensationProposal }) {
+  return <div className="proposal-card">
+    <div className="proposal-head"><div><div className="section-kicker coral-text">Human approval required</div><h3>Compensation proposal</h3></div><span className="proposal-status">Submitted</span></div>
+    <div className="proposal-grid">
+      <div><span>Order</span><strong>{proposal.order_id}</strong></div>
+      <div><span>Amount</span><strong>R$ {proposal.proposed_amount}</strong></div>
+      <div><span>Policy</span><strong>{proposal.policy_doc_id} v{proposal.policy_version}</strong></div>
+      <div><span>Severity</span><strong>{proposal.severity}</strong></div>
+    </div>
+    <div className="proposal-reason">Reason: {proposal.reason}</div>
+    <div className="proposal-actions"><button className="primary-btn" disabled><Check size={15} />Awaiting manager approval</button></div>
+  </div>
+}
 
-function Proposal({ onSubmit }: { onSubmit: () => void }) { const [sent, setSent] = useState(false); return <div className="proposal-card"><div className="proposal-head"><div><div className="section-kicker coral-text">Human approval required</div><h3>Compensation proposal</h3></div><span className="proposal-status">{sent ? 'Submitted' : 'Proposal'}</span></div><div className="proposal-grid"><div><span>Order</span><strong>e48151c...</strong></div><div><span>Amount</span><strong>R$ 75</strong></div><div><span>Policy</span><strong>Refund Policy v2.1 §4.1</strong></div><div><span>Expires in</span><strong className="coral-text">14:32</strong></div></div><div className="proposal-reason">Reason: Delivery delay beyond policy threshold</div><div className="proposal-actions"><button className="primary-btn" onClick={() => { setSent(true); onSubmit() }} disabled={sent}>{sent ? <><Check size={15} />Awaiting manager approval</> : 'Submit for approval'}</button><button className="text-btn">Dismiss</button></div></div> }
+interface ChatMessageItem {
+  role: 'user' | 'assistant'
+  content: string
+  citations?: PolicyEvidence[]
+  proposal?: CompensationProposal | null
+  error?: boolean
+}
 
-function ToolTags() { return <div className="tool-tags"><span>get_order</span><span>estimate_delivery_risk</span><span>search_policy</span><span>calculate_compensation</span></div> }
+function ChatPage({ session }: { session: Session }) {
+  const [messages, setMessages] = useState<ChatMessageItem[]>([])
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
 
-function ChatPage() { return <div className="chat-layout"><div className="conversation-list"><div className="flex items-center justify-between"><div className="section-kicker">Investigations</div><button className="icon-btn"><Plus size={16} /></button></div><button className="new-chat"><Plus size={15} /> New investigation</button><div className="conversation active"><div className="conversation-icon mint"><MessageSquare size={14} /></div><div><div className="font-medium text-xs">Why is e48151c delayed?</div><div className="text-[10px] text-muted mt-1">Just now</div></div></div><div className="conversation"><div className="conversation-icon yellow"><MessageSquare size={14} /></div><div><div className="font-medium text-xs">Can we compensate 8f2a...</div><div className="text-[10px] text-muted mt-1">Yesterday</div></div></div><div className="conversation"><div className="conversation-icon peach"><MessageSquare size={14} /></div><div><div className="font-medium text-xs">Seller performance — SP</div><div className="text-[10px] text-muted mt-1">Jun 18</div></div></div><div className="conversation-footer"><div className="text-[10px] text-muted">Evidence-first operations</div><div className="text-xs mt-2 leading-relaxed">Every answer is grounded in confirmed order data and policy evidence.</div></div></div><div className="chat-main"><div className="chat-title"><div><div className="section-kicker">AI operations workspace</div><h1>Order investigation</h1></div><button className="icon-btn"><MoreHorizontal size={18} /></button></div><div className="messages"><div className="user-message"><div className="avatar small">AM</div><div><div className="message-meta">Alex Morgan · Support agent</div><div className="user-bubble">Why is order e48151c delayed and can we compensate the customer?</div></div></div><div className="ai-message"><div className="ai-avatar"><Sparkles size={15} /></div><div className="ai-content"><div className="message-meta">ShopOps AI <span className="live-dot" /> Evidence grounded</div><p className="message-text">I found the order and confirmed a delivery exception. The shipment is currently in transit, past its expected window. I can&apos;t confirm an external cause because shipping signals are unavailable.</p><div className="order-summary"><div className="flex items-center justify-between mb-3"><div><div className="section-kicker">Order summary</div><div className="font-semibold mt-1">e48151c <span className="text-muted font-normal">· Seller SP-1048</span></div></div><StatusBadge status="Shipped" /></div><div className="summary-grid"><div><span>Order value</span><strong>R$ 375</strong></div><div><span>Payment</span><strong>Pix</strong></div><div><span>Expected</span><strong>24 Jun 2025</strong></div></div><Timeline /></div><RiskCard /><div className="evidence-row"><div className="section-kicker">Policy evidence</div><Citation /></div><Proposal onSubmit={() => {}} /><ToolTags /></div></div><div className="refusal"><ShieldCheck size={16} /><div><strong>Request cannot be processed</strong><p>I can help investigate orders, retrieve policy evidence, and prepare eligible compensation proposals.</p></div></div></div><div className="chat-composer"><button className="icon-btn"><Plus size={18} /></button><input placeholder="Ask about an order, seller, policy, or delivery…" /><button className="send-btn"><Send size={16} /></button></div></div><div className="context-panel"><div className="section-kicker">Context</div><h3>Selected order</h3><div className="context-order"><div className="order-glyph"><PackageSearch size={18} /></div><div><div className="font-semibold text-sm">e48151c</div><div className="text-[11px] text-muted">Opened from AI response</div></div></div><div className="context-divider" /><div className="context-stat"><span>Customer history</span><strong>4 orders · 100% paid</strong></div><div className="context-stat"><span>Seller status</span><strong className="mint-text">Healthy</strong></div><div className="context-stat"><span>Last event</span><strong>In transit · 08:42</strong></div><button className="outline-btn w-full mt-5">Open full order <ArrowUpRight size={14} /></button></div></div> }
+  const updateLastMessage = (updater: (m: ChatMessageItem) => ChatMessageItem) => {
+    setMessages((prev) => {
+      const next = [...prev]
+      next[next.length - 1] = updater(next[next.length - 1])
+      return next
+    })
+  }
+
+  const sendMessage = async () => {
+    const text = input.trim()
+    if (!text || sending) return
+    setInput('')
+    setSending(true)
+    setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }])
+
+    await streamChat(conversationId, text, {
+      onChunk: (delta) => updateLastMessage((m) => ({ ...m, content: m.content + delta })),
+      onDone: (result: ChatDone) => {
+        setConversationId(result.conversationId)
+        updateLastMessage((m) => ({ ...m, citations: result.citations, proposal: result.proposal }))
+        setSending(false)
+      },
+      onError: (message) => {
+        updateLastMessage(() => ({ role: 'assistant', content: message, error: true }))
+        setSending(false)
+      },
+    })
+  }
+
+  const newChat = () => { setMessages([]); setConversationId(null) }
+
+  return <div className="chat-layout">
+    <div className="conversation-list">
+      <div className="section-kicker">Investigations</div>
+      <button className="new-chat" onClick={newChat}><Plus size={15} /> New investigation</button>
+      <div className="conversation-footer">
+        <div className="text-[10px] text-muted">Evidence-first operations</div>
+        <div className="text-xs mt-2 leading-relaxed">Every answer is grounded in confirmed order data and policy evidence.</div>
+      </div>
+    </div>
+    <div className="chat-main">
+      <div className="chat-title"><div><div className="section-kicker">AI operations workspace</div><h1>Order investigation</h1></div></div>
+      <div className="messages">
+        {messages.length === 0 && <div className="text-sm text-muted px-2">Ask about an order, seller, policy, or delivery to get started.</div>}
+        {messages.map((m, i) => m.role === 'user'
+          ? <div className="user-message" key={i}>
+              <div className="avatar small">{session.email.slice(0, 2).toUpperCase()}</div>
+              <div><div className="message-meta">{session.email} · {session.role}</div><div className="user-bubble">{m.content}</div></div>
+            </div>
+          : <div className="ai-message" key={i}>
+              <div className="ai-avatar"><Sparkles size={15} /></div>
+              <div className="ai-content">
+                <div className="message-meta">ShopOps AI <span className="live-dot" /> {m.error ? 'Error' : 'Evidence grounded'}</div>
+                <p className="message-text">{m.content || (sending && i === messages.length - 1 ? '…' : '')}</p>
+                {!!m.citations?.length && <div className="evidence-row"><div className="section-kicker">Policy evidence</div>{m.citations.map((c, ci) => <Citation key={ci} citation={c} />)}</div>}
+                {m.proposal && <Proposal proposal={m.proposal} />}
+              </div>
+            </div>
+        )}
+      </div>
+      <div className="chat-composer">
+        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Ask about an order, seller, policy, or delivery…" disabled={sending} />
+        <button className="send-btn" onClick={sendMessage} disabled={sending}><Send size={16} /></button>
+      </div>
+    </div>
+  </div>
+}
 
 function Dashboard() { return <div className="page-content"><div className="page-intro"><div><div className="section-kicker">Tuesday, June 24, 2025</div><h1>Good morning, Alex</h1><p>Here&apos;s what&apos;s happening across operations.</p></div><a href="/dashboard/chat" className="primary-btn"><Sparkles size={15} />Ask ShopOps AI</a></div><div className="stat-grid"><StatCard label="Total orders" value="12,842" delta="8.2% vs last week" icon={<PackageSearch size={17} />} tone="mint" /><StatCard label="Pending approvals" value="3" delta="2 need attention" icon={<ClipboardCheck size={17} />} tone="yellow" /><StatCard label="Avg delivery time" value="3.4d" delta="0.3d faster" icon={<Clock3 size={17} />} tone="peach" /><StatCard label="Active sellers" value="284" delta="12 new this month" icon={<Store size={17} />} tone="coral" /></div><div className="dashboard-grid"><div className="soft-card chart-card"><div className="card-heading"><div><div className="section-kicker">Operations pulse</div><h2>Order volume</h2></div><button className="filter-pill">Last 7 days <ChevronDown size={13} /></button></div><ResponsiveContainer width="100%" height={250}><AreaChart data={volume} margin={{ left: -25, right: 8, top: 20 }}><defs><linearGradient id="mintArea" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#a8e6cf" stopOpacity={0.55} /><stop offset="95%" stopColor="#a8e6cf" stopOpacity={0.03} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9efec" /><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#85938e' }} /><YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#85938e' }} /><Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #e2ebe6', fontSize: 12 }} /><Area type="monotone" dataKey="orders" stroke="#559c83" strokeWidth={2.5} fill="url(#mintArea)" /></AreaChart></ResponsiveContainer></div><div className="soft-card activity-card"><div className="card-heading"><div><div className="section-kicker">Live feed</div><h2>Recent activity</h2></div><button className="icon-btn"><MoreHorizontal size={17} /></button></div><div>{activity.map((item) => <div className="activity-row" key={item.title}><div className={`activity-marker ${item.tone}`}><Check size={12} /></div><div className="flex-1 min-w-0"><div className="text-xs font-semibold">{item.title}</div><div className="text-[11px] text-muted mt-1 truncate">{item.detail}</div></div><time>{item.time}</time></div>)}</div><a href="/dashboard/audit" className="view-all">View audit log <ArrowUpRight size={13} /></a></div></div></div> }
 
@@ -97,7 +198,7 @@ export default function Page() {
   if (!checked) return null
   if (!session || path === '/login') return <Login onLogin={handleLogin} />
 
-  const page = path === '/dashboard/chat' ? <ChatPage /> : path === '/dashboard/orders' ? <OrdersPage /> : path === '/dashboard/sellers' ? <SellersPage /> : path === '/dashboard/approvals' ? <ApprovalsPage /> : path === '/dashboard/audit' ? <AuditPage /> : <Dashboard />
+  const page = path === '/dashboard/chat' ? <ChatPage session={session} /> : path === '/dashboard/orders' ? <OrdersPage /> : path === '/dashboard/sellers' ? <SellersPage /> : path === '/dashboard/approvals' ? <ApprovalsPage /> : path === '/dashboard/audit' ? <AuditPage /> : <Dashboard />
   const title = path === '/dashboard/chat' ? 'AI Chat' : path.split('/').pop()?.replace('-', ' ') || 'Dashboard'
   return <div className="app-shell"><div className={`sidebar-mobile-overlay ${mobileOpen ? 'open' : ''}`} onClick={() => setMobileOpen(false)} /><div className={`sidebar-wrap ${mobileOpen ? 'mobile-open' : ''}`}><Sidebar path={path} role={session.role} email={session.email} onLogout={handleLogout} collapsed={collapsed} setCollapsed={setCollapsed} /></div><div className="main-shell"><TopHeader title={title} onMenu={() => setMobileOpen(!mobileOpen)} /><main>{page}</main></div></div>
 }
