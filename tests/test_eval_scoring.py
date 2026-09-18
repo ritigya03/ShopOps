@@ -1,4 +1,6 @@
+from app.agent.prompts import SYSTEM_PROMPT
 from scripts.eval_agent import (
+    _build_eval_state,
     load_cases,
     score_abstention,
     score_citation,
@@ -70,3 +72,22 @@ def test_score_abstention_detects_mismatch():
     case = {"expect_abstain": True}
     result = {"actual_abstain": False}
     assert score_abstention(case, result) is False
+
+
+def test_build_eval_state_shapes_initial_agent_state():
+    case = {"message": "What is the status of order abc123?", "role": "SupportAgent"}
+    state = _build_eval_state(case)
+
+    assert state["messages"] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "What is the status of order abc123?"},
+    ]
+    assert state["user"].sub == "eval"
+    assert state["user"].role == "SupportAgent"
+    assert state["pending_tool_calls"] == []
+    assert state["tool_results"] == []
+    assert state["evidence"] == []
+    assert state["abstain"] is False
+    assert state["loop_count"] == 0
+    assert state["answer"] is None
+    assert state["proposal"] is None
